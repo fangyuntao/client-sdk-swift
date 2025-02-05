@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 import Foundation
 
 @objc
-public enum ProtocolVersion: Int {
+public enum ProtocolVersion: Int, Sendable {
     case v8 = 8
     case v9 = 9
     case v10 = 10 /// Sync stream id

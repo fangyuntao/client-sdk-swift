@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-import Foundation
-
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
-public class RemoteVideoTrack: Track, RemoteTrack, VideoTrack {
+public class RemoteVideoTrack: Track, RemoteTrack {
     init(name: String,
          source: Track.Source,
          track: LKRTCMediaStreamTrack,
@@ -33,12 +35,32 @@ public class RemoteVideoTrack: Track, RemoteTrack, VideoTrack {
     }
 }
 
-public extension RemoteVideoTrack {
-    func add(videoRenderer: VideoRenderer) {
-        super._add(videoRenderer: videoRenderer)
+// MARK: - VideoTrack Protocol
+
+extension RemoteVideoTrack: VideoTrack {
+    public func add(videoRenderer: VideoRenderer) {
+        guard let rtcVideoTrack = mediaTrack as? LKRTCVideoTrack else {
+            log("mediaTrack is not a RTCVideoTrack", .error)
+            return
+        }
+
+        _state.mutate {
+            $0.videoRenderers.add(videoRenderer)
+        }
+
+        rtcVideoTrack.add(VideoRendererAdapter(target: videoRenderer))
     }
 
-    func remove(videoRenderer: VideoRenderer) {
-        super._remove(videoRenderer: videoRenderer)
+    public func remove(videoRenderer: VideoRenderer) {
+        guard let rtcVideoTrack = mediaTrack as? LKRTCVideoTrack else {
+            log("mediaTrack is not a RTCVideoTrack", .error)
+            return
+        }
+
+        _state.mutate {
+            $0.videoRenderers.remove(videoRenderer)
+        }
+
+        rtcVideoTrack.remove(VideoRendererAdapter(target: videoRenderer))
     }
 }

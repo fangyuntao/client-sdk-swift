@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,19 @@
 import Foundation
 
 #if canImport(ReplayKit)
-    import ReplayKit
+import ReplayKit
 #endif
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @available(macOS 11.0, iOS 11.0, *)
 public class InAppScreenCapturer: VideoCapturer {
-    private let capturer = Engine.createVideoCapturer()
-    private var options: ScreenShareCaptureOptions
+    private let capturer = RTC.createVideoCapturer()
+    private let options: ScreenShareCaptureOptions
 
     init(delegate: LKRTCVideoCapturerDelegate, options: ScreenShareCaptureOptions) {
         self.options = options
@@ -39,24 +43,11 @@ public class InAppScreenCapturer: VideoCapturer {
         guard didStart else { return false }
 
         // TODO: force pixel format kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        try await RPScreenRecorder.shared().startCapture { sampleBuffer, type, _ in
-
+        try await RPScreenRecorder.shared().startCapture { [weak self] sampleBuffer, type, _ in
+            guard let self else { return }
             // Only process .video
             if type == .video {
-                self.delegate?.capturer(self.capturer, didCapture: sampleBuffer) { sourceDimensions in
-
-                    let targetDimensions = sourceDimensions
-                        .aspectFit(size: self.options.dimensions.max)
-                        .toEncodeSafeDimensions()
-
-                    defer { self.dimensions = targetDimensions }
-
-                    guard let videoSource = self.delegate as? LKRTCVideoSource else { return }
-                    // self.log("adaptOutputFormat to: \(targetDimensions) fps: \(self.options.fps)")
-                    videoSource.adaptOutputFormat(toWidth: targetDimensions.width,
-                                                  height: targetDimensions.height,
-                                                  fps: Int32(self.options.fps))
-                }
+                self.capture(sampleBuffer: sampleBuffer, capturer: self.capturer, options: self.options)
             }
         }
 
@@ -82,7 +73,7 @@ public extension LocalVideoTrack {
                                             options: ScreenShareCaptureOptions = ScreenShareCaptureOptions(),
                                             reportStatistics: Bool = false) -> LocalVideoTrack
     {
-        let videoSource = Engine.createVideoSource(forScreenShare: true)
+        let videoSource = RTC.createVideoSource(forScreenShare: true)
         let capturer = InAppScreenCapturer(delegate: videoSource, options: options)
         return LocalVideoTrack(name: name,
                                source: .screenShareVideo,

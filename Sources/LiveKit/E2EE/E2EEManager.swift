@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,11 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
 public class E2EEManager: NSObject, ObservableObject, Loggable {
@@ -109,11 +113,15 @@ public class E2EEManager: NSObject, ObservableObject, Loggable {
             return
         }
 
-        let frameCryptor = LKRTCFrameCryptor(factory: Engine.peerConnectionFactory,
-                                             rtpSender: sender,
-                                             participantId: participantIdentity.stringValue,
-                                             algorithm: RTCCyrptorAlgorithm.aesGcm,
-                                             keyProvider: e2eeOptions.keyProvider.rtcKeyProvider!)
+        guard let frameCryptor = LKRTCFrameCryptor(factory: RTC.peerConnectionFactory,
+                                                   rtpSender: sender,
+                                                   participantId: participantIdentity.stringValue,
+                                                   algorithm: .aesGcm,
+                                                   keyProvider: e2eeOptions.keyProvider.rtcKeyProvider)
+        else {
+            log("frameCryptor is nil, skipping creating frame cryptor...", .warning)
+            return
+        }
 
         frameCryptor.delegate = delegateAdapter
 
@@ -135,11 +143,15 @@ public class E2EEManager: NSObject, ObservableObject, Loggable {
             return
         }
 
-        let frameCryptor = LKRTCFrameCryptor(factory: Engine.peerConnectionFactory,
-                                             rtpReceiver: receiver,
-                                             participantId: participantIdentity.stringValue,
-                                             algorithm: RTCCyrptorAlgorithm.aesGcm,
-                                             keyProvider: e2eeOptions.keyProvider.rtcKeyProvider!)
+        guard let frameCryptor = LKRTCFrameCryptor(factory: RTC.peerConnectionFactory,
+                                                   rtpReceiver: receiver,
+                                                   participantId: participantIdentity.stringValue,
+                                                   algorithm: .aesGcm,
+                                                   keyProvider: e2eeOptions.keyProvider.rtcKeyProvider)
+        else {
+            log("frameCryptor is nil, skipping creating frame cryptor...", .warning)
+            return
+        }
 
         frameCryptor.delegate = delegateAdapter
 

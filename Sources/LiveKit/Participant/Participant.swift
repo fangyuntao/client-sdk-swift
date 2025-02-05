@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,17 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
 public class Participant: NSObject, ObservableObject, Loggable {
     // MARK: - MulticastDelegate
 
-    public let delegates = MulticastDelegate<ParticipantDelegate>()
+    public let delegates = MulticastDelegate<ParticipantDelegate>(label: "ParticipantDelegate")
 
     @objc
     public var sid: Sid? { _state.sid }
@@ -43,6 +47,9 @@ public class Participant: NSObject, ObservableObject, Loggable {
     public var metadata: String? { _state.metadata }
 
     @objc
+    public var attributes: [String: String] { _state.attributes }
+
+    @objc
     public var connectionQuality: ConnectionQuality { _state.connectionQuality }
 
     @objc
@@ -50,6 +57,10 @@ public class Participant: NSObject, ObservableObject, Loggable {
 
     @objc
     public var joinedAt: Date? { _state.joinedAt }
+
+    /// The kind of participant (i.e. a standard client participant, AI agent, etc.)
+    @objc
+    public var kind: Kind { _state.kind }
 
     @objc
     public var trackPublications: [Track.Sid: TrackPublication] { _state.trackPublications }
@@ -62,6 +73,14 @@ public class Participant: NSObject, ObservableObject, Loggable {
     @objc
     public var videoTracks: [TrackPublication] {
         _state.trackPublications.values.filter { $0.kind == .video }
+    }
+
+    @objc
+    public var agentState: AgentState {
+        guard case .agent = kind else { return .unknown }
+        guard let attrString = _state.attributes[agentStateAttributeKey] else { return .connecting }
+        guard let state = AgentState.fromString(attrString) else { return .connecting }
+        return state
     }
 
     var info: Livekit_ParticipantInfo?
@@ -79,12 +98,16 @@ public class Participant: NSObject, ObservableObject, Loggable {
         var isSpeaking: Bool = false
         var metadata: String?
         var joinedAt: Date?
+        var kind: Kind = .unknown
         var connectionQuality: ConnectionQuality = .unknown
         var permissions = ParticipantPermissions()
         var trackPublications = [Track.Sid: TrackPublication]()
+        var attributes = [String: String]()
     }
 
-    var _state: StateSync<State>
+    let _state: StateSync<State>
+
+    let _publishSerialRunner = SerialRunnerActor<LocalTrackPublication?>()
 
     init(room: Room, sid: Sid? = nil, identity: Identity? = nil) {
         _room = room
@@ -130,6 +153,22 @@ public class Participant: NSObject, ObservableObject, Loggable {
                 }
             }
 
+            // attributes updated
+            if newState.attributes != oldState.attributes {
+                // Compute diff of attributes
+                let attributesDiff = computeAttributesDiff(oldValues: oldState.attributes, newValues: newState.attributes)
+                if !attributesDiff.isEmpty {
+                    // Notfy ParticipantDelegate
+                    self.delegates.notify(label: { "participant.didUpdateAttributes: \(String(describing: attributesDiff))" }) {
+                        $0.participant?(self, didUpdateAttributes: attributesDiff)
+                    }
+                    // Notify RoomDelegate
+                    room.delegates.notify(label: { "room.didUpdateAttributes: \(String(describing: attributesDiff))" }) {
+                        $0.room?(room, participant: self, didUpdateAttributes: attributesDiff)
+                    }
+                }
+            }
+
             if newState.connectionQuality != oldState.connectionQuality {
                 self.delegates.notify(label: { "participant.didUpdate connectionQuality: \(self.connectionQuality)" }) {
                     $0.participant?(self, didUpdateConnectionQuality: self.connectionQuality)
@@ -153,13 +192,15 @@ public class Participant: NSObject, ObservableObject, Loggable {
 
     func cleanUp(notify _notify: Bool = true) async {
         await unpublishAll(notify: _notify)
-        // Reset state
+
         if let self = self as? RemoteParticipant, let room = self._room {
-            room.delegates.notify(label: { "room.participantDidDisconnect:" }) {
+            // Call async version of notify to wait delegates before resetting state
+            await room.delegates.notifyAsync {
                 $0.room?(room, participantDidDisconnect: self)
             }
         }
 
+        // Reset state
         _state.mutate { $0 = State() }
     }
 
@@ -172,13 +213,15 @@ public class Participant: NSObject, ObservableObject, Loggable {
         publication.track?._state.mutate { $0.sid = publication.sid }
     }
 
-    func updateFromInfo(info: Livekit_ParticipantInfo) {
+    func set(info: Livekit_ParticipantInfo, connectionState _: ConnectionState) {
         _state.mutate {
             $0.sid = Sid(from: info.sid)
             $0.identity = Identity(from: info.identity)
             $0.name = info.name
             $0.metadata = info.metadata
             $0.joinedAt = Date(timeIntervalSince1970: TimeInterval(info.joinedAt))
+            $0.kind = info.kind.toLKType()
+            $0.attributes = info.attributes
         }
 
         self.info = info

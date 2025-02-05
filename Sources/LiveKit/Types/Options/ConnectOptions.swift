@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,11 @@ import Foundation
 
 /// Options used when establishing a connection.
 @objc
-public class ConnectOptions: NSObject {
+public final class ConnectOptions: NSObject, Sendable {
     /// Automatically subscribe to ``RemoteParticipant``'s tracks.
     /// Defaults to true.
     @objc
     public let autoSubscribe: Bool
-
-    /// Providing a string will make the connection publish-only, suitable for iOS Broadcast Upload Extensions.
-    /// The string can be used to identify the publisher.
-    @objc
-    public let publishOnlyMode: String?
 
     /// The number of attempts to reconnect when the network disconnects.
     @objc
@@ -37,9 +32,22 @@ public class ConnectOptions: NSObject {
     @objc
     public let reconnectAttemptDelay: TimeInterval
 
+    /// The timeout interval for the initial websocket connection.
+    @objc
+    public let socketConnectTimeoutInterval: TimeInterval
+
+    @objc
+    public let primaryTransportConnectTimeout: TimeInterval
+
+    @objc
+    public let publisherTransportConnectTimeout: TimeInterval
+
     /// Custom ice servers
     @objc
     public let iceServers: [IceServer]
+
+    @objc
+    public let iceTransportPolicy: IceTransportPolicy
 
     /// LiveKit server protocol version to use. Generally, it's not recommended to change this.
     @objc
@@ -48,26 +56,35 @@ public class ConnectOptions: NSObject {
     @objc
     override public init() {
         autoSubscribe = true
-        publishOnlyMode = nil
         reconnectAttempts = 3
         reconnectAttemptDelay = .defaultReconnectAttemptDelay
+        socketConnectTimeoutInterval = .defaultSocketConnect
+        primaryTransportConnectTimeout = .defaultTransportState
+        publisherTransportConnectTimeout = .defaultTransportState
         iceServers = []
+        iceTransportPolicy = .all
         protocolVersion = .v12
     }
 
     @objc
     public init(autoSubscribe: Bool = true,
-                publishOnlyMode: String? = nil,
                 reconnectAttempts: Int = 3,
                 reconnectAttemptDelay: TimeInterval = .defaultReconnectAttemptDelay,
+                socketConnectTimeoutInterval: TimeInterval = .defaultSocketConnect,
+                primaryTransportConnectTimeout: TimeInterval = .defaultTransportState,
+                publisherTransportConnectTimeout: TimeInterval = .defaultTransportState,
                 iceServers: [IceServer] = [],
+                iceTransportPolicy: IceTransportPolicy = .all,
                 protocolVersion: ProtocolVersion = .v12)
     {
         self.autoSubscribe = autoSubscribe
-        self.publishOnlyMode = publishOnlyMode
         self.reconnectAttempts = reconnectAttempts
         self.reconnectAttemptDelay = reconnectAttemptDelay
+        self.socketConnectTimeoutInterval = socketConnectTimeoutInterval
+        self.primaryTransportConnectTimeout = primaryTransportConnectTimeout
+        self.publisherTransportConnectTimeout = publisherTransportConnectTimeout
         self.iceServers = iceServers
+        self.iceTransportPolicy = iceTransportPolicy
         self.protocolVersion = protocolVersion
     }
 
@@ -76,20 +93,26 @@ public class ConnectOptions: NSObject {
     override public func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? Self else { return false }
         return autoSubscribe == other.autoSubscribe &&
-            publishOnlyMode == other.publishOnlyMode &&
             reconnectAttempts == other.reconnectAttempts &&
             reconnectAttemptDelay == other.reconnectAttemptDelay &&
+            socketConnectTimeoutInterval == other.socketConnectTimeoutInterval &&
+            primaryTransportConnectTimeout == other.primaryTransportConnectTimeout &&
+            publisherTransportConnectTimeout == other.publisherTransportConnectTimeout &&
             iceServers == other.iceServers &&
+            iceTransportPolicy == other.iceTransportPolicy &&
             protocolVersion == other.protocolVersion
     }
 
     override public var hash: Int {
         var hasher = Hasher()
         hasher.combine(autoSubscribe)
-        hasher.combine(publishOnlyMode)
         hasher.combine(reconnectAttempts)
         hasher.combine(reconnectAttemptDelay)
+        hasher.combine(socketConnectTimeoutInterval)
+        hasher.combine(primaryTransportConnectTimeout)
+        hasher.combine(publisherTransportConnectTimeout)
         hasher.combine(iceServers)
+        hasher.combine(iceTransportPolicy)
         hasher.combine(protocolVersion)
         return hasher.finalize()
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 import Foundation
 
 @objc
-public enum EncryptionType: Int {
+public enum EncryptionType: Int, Sendable {
     case none
     case gcm
     case custom
@@ -46,13 +46,32 @@ extension Livekit_Encryption.TypeEnum {
 }
 
 @objc
-public class E2EEOptions: NSObject {
-    let keyProvider: BaseKeyProvider
+public final class E2EEOptions: NSObject, Sendable {
+    @objc
+    public let keyProvider: BaseKeyProvider
 
     @objc
-    let encryptionType: EncryptionType = .gcm
+    public let encryptionType: EncryptionType
 
-    public init(keyProvider: BaseKeyProvider) {
+    public init(keyProvider: BaseKeyProvider,
+                encryptionType: EncryptionType = .gcm)
+    {
         self.keyProvider = keyProvider
+        self.encryptionType = encryptionType
+    }
+
+    // MARK: - Equal
+
+    override public func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? Self else { return false }
+        return keyProvider == other.keyProvider &&
+            encryptionType == other.encryptionType
+    }
+
+    override public var hash: Int {
+        var hasher = Hasher()
+        hasher.combine(keyProvider)
+        hasher.combine(encryptionType)
+        return hasher.finalize()
     }
 }

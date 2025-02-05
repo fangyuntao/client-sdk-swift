@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,12 @@
  */
 
 import CoreMedia
-import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 public protocol VideoBuffer {}
 
@@ -34,6 +37,11 @@ public class CVPixelVideoBuffer: VideoBuffer, RTCCompatibleVideoBuffer {
         _rtcType.pixelBuffer
     }
 
+    public init(pixelBuffer: CVPixelBuffer) {
+        _rtcType = LKRTCCVPixelBuffer(pixelBuffer: pixelBuffer)
+    }
+
+    // Internal only.
     init(rtcCVPixelBuffer: LKRTCCVPixelBuffer) {
         _rtcType = rtcCVPixelBuffer
     }
@@ -118,5 +126,21 @@ extension VideoFrame {
         return LKRTCVideoFrame(buffer: buffer.toRTCType(),
                                rotation: rotation.toRTCType(),
                                timeStampNs: timeStampNs)
+    }
+}
+
+public extension VideoFrame {
+    func toCVPixelBuffer() -> CVPixelBuffer? {
+        if let cvPixelVideoBuffer = buffer as? CVPixelVideoBuffer {
+            return cvPixelVideoBuffer.pixelBuffer
+        } else if let i420VideoBuffer = buffer as? I420VideoBuffer {
+            return i420VideoBuffer.toPixelBuffer()
+        }
+        return nil
+    }
+
+    func toCMSampleBuffer() -> CMSampleBuffer? {
+        guard let cvPixelBuffer = toCVPixelBuffer() else { return nil }
+        return CMSampleBuffer.from(cvPixelBuffer)
     }
 }

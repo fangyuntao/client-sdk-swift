@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,18 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 protocol VideoCapturerProtocol {
     var capturer: LKRTCVideoCapturer { get }
 }
 
 extension VideoCapturerProtocol {
-    public var capturer: LKRTCVideoCapturer {
-        fatalError("Must be implemented")
-    }
+    public var capturer: LKRTCVideoCapturer { fatalError("Must be implemented") }
 }
 
 @objc
@@ -41,7 +43,10 @@ public protocol VideoCapturerDelegate: AnyObject {
 public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
     // MARK: - MulticastDelegate
 
-    public let delegates = MulticastDelegate<VideoCapturerDelegate>()
+    public let delegates = MulticastDelegate<VideoCapturerDelegate>(label: "VideoCapturerDelegate")
+    public let rendererDelegates = MulticastDelegate<VideoRenderer>(label: "VideoCapturerRendererDelegate")
+
+    private let processingQueue = DispatchQueue(label: "io.livekit.videocapturer.processing")
 
     /// Array of supported pixel formats that can be used to capture a frame.
     ///
@@ -58,31 +63,45 @@ public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
     }
 
     @objc
-    public enum CapturerState: Int {
+    public enum CapturerState: Int, Sendable {
         case stopped
         case started
     }
 
-    weak var delegate: LKRTCVideoCapturerDelegate?
+    private weak var delegate: LKRTCVideoCapturerDelegate?
 
-    let dimensionsCompleter = AsyncCompleter<Dimensions>(label: "Dimensions", defaultTimeOut: .defaultCaptureStart)
+    let dimensionsCompleter = AsyncCompleter<Dimensions>(label: "Dimensions", defaultTimeout: .defaultCaptureStart)
 
-    struct State: Equatable {
+    struct State {
         // Counts calls to start/stopCapturer so multiple Tracks can use the same VideoCapturer.
         var startStopCounter: Int = 0
+        var dimensions: Dimensions? = nil
+        weak var processor: VideoProcessor? = nil
+        var isFrameProcessingBusy: Bool = false
     }
 
-    var _state = StateSync(State())
+    let _state: StateSync<State>
 
-    public internal(set) var dimensions: Dimensions? {
-        didSet {
-            guard oldValue != dimensions else { return }
-            log("[publish] \(String(describing: oldValue)) -> \(String(describing: dimensions))")
-            delegates.notify { $0.capturer?(self, didUpdate: self.dimensions) }
+    public var dimensions: Dimensions? { _state.dimensions }
 
-            if let dimensions {
-                log("[publish] dimensions: \(String(describing: dimensions))")
-                dimensionsCompleter.resume(returning: dimensions)
+    public weak var processor: VideoProcessor? {
+        get { _state.processor }
+        set { _state.mutate { $0.processor = newValue } }
+    }
+
+    func set(dimensions newValue: Dimensions?) {
+        let didUpdate = _state.mutate {
+            let oldDimensions = $0.dimensions
+            $0.dimensions = newValue
+            return newValue != oldDimensions
+        }
+
+        if didUpdate {
+            delegates.notify { $0.capturer?(self, didUpdate: newValue) }
+
+            if let newValue {
+                log("[publish] dimensions: \(String(describing: newValue))")
+                dimensionsCompleter.resume(returning: newValue)
             } else {
                 dimensionsCompleter.reset()
             }
@@ -93,8 +112,9 @@ public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
         _state.startStopCounter == 0 ? .stopped : .started
     }
 
-    init(delegate: LKRTCVideoCapturerDelegate) {
+    init(delegate: LKRTCVideoCapturerDelegate, processor: VideoProcessor? = nil) {
         self.delegate = delegate
+        _state = StateSync(State(processor: processor))
         super.init()
 
         _state.onDidMutate = { [weak self] newState, oldState in
@@ -172,5 +192,88 @@ public class VideoCapturer: NSObject, Loggable, VideoCapturerProtocol {
     public func restartCapture() async throws -> Bool {
         try await stopCapture()
         return try await startCapture()
+    }
+}
+
+extension VideoCapturer {
+    // Capture a RTCVideoFrame
+    func capture(frame: LKRTCVideoFrame,
+                 capturer: LKRTCVideoCapturer,
+                 device: AVCaptureDevice? = nil,
+                 options: VideoCaptureOptions)
+    {
+        _processFrame(frame, capturer: capturer, device: device, options: options)
+    }
+
+    // Capture a CMSampleBuffer
+    func capture(sampleBuffer: CMSampleBuffer,
+                 capturer: LKRTCVideoCapturer,
+                 options: VideoCaptureOptions)
+    {
+        delegate?.capturer(capturer, didCapture: sampleBuffer) { [weak self] frame in
+            self?._processFrame(frame, capturer: capturer, device: nil, options: options)
+        }
+    }
+
+    // Capture a CVPixelBuffer
+    func capture(pixelBuffer: CVPixelBuffer,
+                 capturer: LKRTCVideoCapturer,
+                 timeStampNs: Int64 = VideoCapturer.createTimeStampNs(),
+                 rotation: VideoRotation = ._0,
+                 options: VideoCaptureOptions)
+    {
+        delegate?.capturer(capturer, didCapture: pixelBuffer, timeStampNs: timeStampNs, rotation: rotation.toRTCType()) { [weak self] frame in
+            self?._processFrame(frame, capturer: capturer, device: nil, options: options)
+        }
+    }
+
+    // Process the captured frame
+    private func _processFrame(_ frame: LKRTCVideoFrame,
+                               capturer: LKRTCVideoCapturer,
+                               device: AVCaptureDevice?,
+                               options: VideoCaptureOptions)
+    {
+        if _state.isFrameProcessingBusy {
+            log("Frame processing hasn't completed yet, skipping frame...", .warning)
+            return
+        }
+
+        processingQueue.async { [weak self] in
+            guard let self else { return }
+
+            // Mark as frame processing busy.
+            self._state.mutate { $0.isFrameProcessingBusy = true }
+            defer {
+                self._state.mutate { $0.isFrameProcessingBusy = false }
+            }
+
+            var rtcFrame: LKRTCVideoFrame = frame
+            guard var lkFrame: VideoFrame = frame.toLKType() else {
+                self.log("Failed to convert a RTCVideoFrame to VideoFrame.", .error)
+                return
+            }
+
+            // Apply processing if we have a processor attached.
+            if let processor = self._state.processor {
+                guard let processedFrame = processor.process(frame: lkFrame) else {
+                    self.log("VideoProcessor didn't return a frame, skipping frame.", .warning)
+                    return
+                }
+                lkFrame = processedFrame
+                rtcFrame = processedFrame.toRTCType()
+            }
+
+            // Resolve real dimensions (apply frame rotation)
+            self.set(dimensions: Dimensions(width: rtcFrame.width, height: rtcFrame.height).apply(rotation: rtcFrame.rotation))
+
+            self.delegate?.capturer(capturer, didCapture: rtcFrame)
+
+            if self.rendererDelegates.isDelegatesNotEmpty {
+                self.rendererDelegates.notify { renderer in
+                    renderer.render?(frame: lkFrame)
+                    renderer.render?(frame: lkFrame, captureDevice: device, captureOptions: options)
+                }
+            }
+        }
     }
 }

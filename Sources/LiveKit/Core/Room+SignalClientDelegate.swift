@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,40 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 extension Room: SignalClientDelegate {
+    func signalClient(_: SignalClient, didUpdateConnectionState connectionState: ConnectionState,
+                      oldState: ConnectionState,
+                      disconnectError: LiveKitError?) async
+    {
+        // connectionState did update
+        if connectionState != oldState,
+           // did disconnect
+           case .disconnected = connectionState,
+           // Only attempt re-connect if not cancelled
+           let errorType = disconnectError?.type, errorType != .cancelled,
+           // engine is currently connected state
+           case .connected = _state.connectionState
+        {
+            do {
+                try await startReconnect(reason: .websocket)
+            } catch {
+                log("Failed calling startReconnect, error: \(error)", .error)
+            }
+        }
+    }
+
     func signalClient(_: SignalClient, didReceiveLeave canReconnect: Bool, reason: Livekit_DisconnectReason) async {
         log("canReconnect: \(canReconnect), reason: \(reason)")
 
         if canReconnect {
             // force .full for next reconnect
-            engine._state.mutate { $0.nextReconnectMode = .full }
+            _state.mutate { $0.nextReconnectMode = .full }
         } else {
             // Server indicates it's not recoverable
             await cleanUp(withError: LiveKitError.from(reason: reason))
@@ -35,6 +60,9 @@ extension Room: SignalClientDelegate {
                       qualities: [Livekit_SubscribedQuality],
                       forTrackSid trackSid: String) async
     {
+        // Check if dynacast is enabled
+        guard _state.roomOptions.dynacast else { return }
+
         log("[Publish/Backup] Qualities: \(qualities.map { String(describing: $0) }.joined(separator: ", ")), Codecs: \(codecs.map { String(describing: $0) }.joined(separator: ", "))")
 
         let trackSid = Track.Sid(from: trackSid)
@@ -75,11 +103,16 @@ extension Room: SignalClientDelegate {
             _state.mutate {
                 $0.sid = Room.Sid(from: joinResponse.room.sid)
                 $0.name = joinResponse.room.name
+                $0.serverInfo = joinResponse.serverInfo
+                $0.creationTime = Date(timeIntervalSince1970: TimeInterval(joinResponse.room.creationTime))
+                $0.maxParticipants = Int(joinResponse.room.maxParticipants)
+
                 $0.metadata = joinResponse.room.metadata
                 $0.isRecording = joinResponse.room.activeRecording
-                $0.serverInfo = joinResponse.serverInfo
+                $0.numParticipants = Int(joinResponse.room.numParticipants)
+                $0.numPublishers = Int(joinResponse.room.numPublishers)
 
-                localParticipant.updateFromInfo(info: joinResponse.participant)
+                localParticipant.set(info: joinResponse.participant, connectionState: $0.connectionState)
 
                 if !joinResponse.otherParticipants.isEmpty {
                     for otherParticipant in joinResponse.otherParticipants {
@@ -94,7 +127,6 @@ extension Room: SignalClientDelegate {
         _state.mutate {
             $0.metadata = room.metadata
             $0.isRecording = room.activeRecording
-            $0.maxParticipants = Int(room.maxParticipants)
             $0.numParticipants = Int(room.numParticipants)
             $0.numPublishers = Int(room.numPublishers)
         }
@@ -129,10 +161,8 @@ extension Room: SignalClientDelegate {
             return state.activeSpeakers
         }
 
-        engine.executeIfConnected { [weak self] in
-            guard let self else { return }
-
-            self.delegates.notify(label: { "room.didUpdate speakers: \(speakers)" }) {
+        if case .connected = _state.connectionState {
+            delegates.notify(label: { "room.didUpdate speakers: \(speakers)" }) {
                 $0.room?(self, didUpdateSpeakingParticipants: activeSpeakers)
             }
         }
@@ -214,7 +244,7 @@ extension Room: SignalClientDelegate {
                 let infoIdentity = Participant.Identity(from: info.identity)
 
                 if infoIdentity == localParticipant.identity {
-                    localParticipant.updateFromInfo(info: info)
+                    localParticipant.set(info: info, connectionState: $0.connectionState)
                     continue
                 }
 
@@ -228,7 +258,7 @@ extension Room: SignalClientDelegate {
                     if isNewParticipant {
                         newParticipants.append(participant)
                     } else {
-                        participant.updateFromInfo(info: info)
+                        participant.set(info: info, connectionState: $0.connectionState)
                     }
                 }
             }
@@ -244,13 +274,13 @@ extension Room: SignalClientDelegate {
                     }
                 }
             }
+
+            await group.waitForAll()
         }
 
-        for participant in newParticipants {
-            engine.executeIfConnected { [weak self] in
-                guard let self else { return }
-
-                self.delegates.notify(label: { "room.remoteParticipantDidConnect: \(participant)" }) {
+        if case .connected = _state.connectionState {
+            for participant in newParticipants {
+                delegates.notify(label: { "room.remoteParticipantDidConnect: \(participant)" }) {
                     $0.room?(self, participantDidConnect: participant)
                 }
             }
@@ -275,15 +305,66 @@ extension Room: SignalClientDelegate {
         }
     }
 
-    func signalClient(_: SignalClient, didUpdateConnectionState _: ConnectionState, oldState _: ConnectionState, disconnectError _: LiveKitError?) async {}
+    func signalClient(_: SignalClient, didReceiveIceCandidate iceCandidate: IceCandidate, target: Livekit_SignalTarget) async {
+        guard let transport = target == .subscriber ? _state.subscriber : _state.publisher else {
+            log("Failed to add ice candidate, transport is nil for target: \(target)", .error)
+            return
+        }
 
-    func signalClient(_: SignalClient, didReceiveAnswer _: LKRTCSessionDescription) async {}
+        do {
+            try await transport.add(iceCandidate: iceCandidate)
+        } catch {
+            log("Failed to add ice candidate for transport: \(transport), error: \(error)", .error)
+        }
+    }
 
-    func signalClient(_: SignalClient, didReceiveOffer _: LKRTCSessionDescription) async {}
+    func signalClient(_: SignalClient, didReceiveAnswer answer: LKRTCSessionDescription) async {
+        do {
+            let publisher = try requirePublisher()
+            try await publisher.set(remoteDescription: answer)
+        } catch {
+            log("Failed to set remote description, error: \(error)", .error)
+        }
+    }
 
-    func signalClient(_: SignalClient, didReceiveIceCandidate _: LKRTCIceCandidate, target _: Livekit_SignalTarget) async {}
+    func signalClient(_ signalClient: SignalClient, didReceiveOffer offer: LKRTCSessionDescription) async {
+        log("Received offer, creating & sending answer...")
 
-    func signalClient(_: SignalClient, didPublishLocalTrack _: Livekit_TrackPublishedResponse) async {}
+        guard let subscriber = _state.subscriber else {
+            log("Failed to send answer, subscriber is nil", .error)
+            return
+        }
 
-    func signalClient(_: SignalClient, didUpdateToken _: String) async {}
+        do {
+            try await subscriber.set(remoteDescription: offer)
+            let answer = try await subscriber.createAnswer()
+            try await subscriber.set(localDescription: answer)
+            try await signalClient.send(answer: answer)
+        } catch {
+            log("Failed to send answer with error: \(error)", .error)
+        }
+    }
+
+    func signalClient(_: SignalClient, didUpdateToken token: String) async {
+        // update token
+        _state.mutate { $0.token = token }
+    }
+
+    func signalClient(_: SignalClient, didSubscribeTrack trackSid: Track.Sid) async {
+        // Find the local track publication.
+        guard let track = localParticipant.trackPublications[trackSid] as? LocalTrackPublication else {
+            log("Could not find local track publication for subscribed event")
+            return
+        }
+
+        // Notify Room.
+        delegates.notify {
+            $0.room?(self, participant: self.localParticipant, remoteDidSubscribeTrack: track)
+        }
+
+        // Notify LocalParticipant.
+        localParticipant.delegates.notify {
+            $0.participant?(self.localParticipant, remoteDidSubscribeTrack: track)
+        }
+    }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,17 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 extension LKRTCRtpTransceiver: Loggable {
     /// Attempts to set preferred video codec.
     func set(preferredVideoCodec codec: VideoCodec, exceptCodec: VideoCodec? = nil) {
         // Get list of supported codecs...
-        let allVideoCodecs = Engine.videoSenderCapabilities.codecs
+        let allVideoCodecs = RTC.videoSenderCapabilities.codecs
 
         // Get the RTCRtpCodecCapability of the preferred codec
         let preferredCodecCapability = allVideoCodecs.first { $0.name.lowercased() == codec.id }

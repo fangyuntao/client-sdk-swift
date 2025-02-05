@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-import Foundation
-
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 extension LKRTCSessionDescription {
     func toPBType() -> Livekit_SessionDescription {
@@ -44,6 +46,6 @@ extension Livekit_SessionDescription {
         default: fatalError("Unknown state \(type)") // This should never happen
         }
 
-        return Engine.createSessionDescription(type: sdpType, sdp: sdp)
+        return RTC.createSessionDescription(type: sdpType, sdp: sdp)
     }
 }

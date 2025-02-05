@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 import Foundation
 
 @objc
-public class VideoPublishOptions: NSObject, TrackPublishOptions {
+public final class VideoPublishOptions: NSObject, TrackPublishOptions, Sendable {
     @objc
     public let name: String?
 
@@ -46,6 +46,9 @@ public class VideoPublishOptions: NSObject, TrackPublishOptions {
     public let preferredBackupCodec: VideoCodec?
 
     @objc
+    public let degradationPreference: DegradationPreference
+
+    @objc
     public let streamName: String?
 
     public init(name: String? = nil,
@@ -56,6 +59,7 @@ public class VideoPublishOptions: NSObject, TrackPublishOptions {
                 screenShareSimulcastLayers: [VideoParameters] = [],
                 preferredCodec: VideoCodec? = nil,
                 preferredBackupCodec: VideoCodec? = nil,
+                degradationPreference: DegradationPreference = .auto,
                 streamName: String? = nil)
     {
         self.name = name
@@ -66,6 +70,7 @@ public class VideoPublishOptions: NSObject, TrackPublishOptions {
         self.screenShareSimulcastLayers = screenShareSimulcastLayers
         self.preferredCodec = preferredCodec
         self.preferredBackupCodec = preferredBackupCodec
+        self.degradationPreference = degradationPreference
         self.streamName = streamName
     }
 
@@ -81,6 +86,7 @@ public class VideoPublishOptions: NSObject, TrackPublishOptions {
             screenShareSimulcastLayers == other.screenShareSimulcastLayers &&
             preferredCodec == other.preferredCodec &&
             preferredBackupCodec == other.preferredBackupCodec &&
+            degradationPreference == other.degradationPreference &&
             streamName == other.streamName
     }
 
@@ -94,6 +100,7 @@ public class VideoPublishOptions: NSObject, TrackPublishOptions {
         hasher.combine(screenShareSimulcastLayers)
         hasher.combine(preferredCodec)
         hasher.combine(preferredBackupCodec)
+        hasher.combine(degradationPreference)
         hasher.combine(streamName)
         return hasher.finalize()
     }

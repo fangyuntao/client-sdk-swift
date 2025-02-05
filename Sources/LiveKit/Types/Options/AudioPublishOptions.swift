@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 import Foundation
 
 @objc
-public class AudioPublishOptions: NSObject, TrackPublishOptions {
+public final class AudioPublishOptions: NSObject, TrackPublishOptions, Sendable {
     @objc
     public let name: String?
 
@@ -59,5 +59,14 @@ public class AudioPublishOptions: NSObject, TrackPublishOptions {
         hasher.combine(dtx)
         hasher.combine(streamName)
         return hasher.finalize()
+    }
+}
+
+// Internal
+extension AudioPublishOptions {
+    func toFeatures() -> Set<Livekit_AudioTrackFeature> {
+        Set([
+            !dtx ? .tfNoDtx : nil,
+        ].compactMap { $0 })
     }
 }

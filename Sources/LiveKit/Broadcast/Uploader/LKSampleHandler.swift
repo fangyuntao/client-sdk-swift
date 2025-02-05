@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,97 +16,164 @@
 
 #if os(iOS)
 
-    #if canImport(ReplayKit)
-        import ReplayKit
-    #endif
+#if canImport(ReplayKit)
+import ReplayKit
+#endif
 
-    open class LKSampleHandler: RPBroadcastSampleHandler {
-        private var clientConnection: BroadcastUploadSocketConnection?
-        private var uploader: SampleUploader?
+#if swift(>=5.9)
+internal import Logging
+#else
+@_implementationOnly import Logging
+#endif
 
-        public var appGroupIdentifier: String? {
-            Bundle.main.infoDictionary?[BroadcastScreenCapturer.kAppGroupIdentifierKey] as? String
+import Combine
+import LKObjCHelpers
+import OSLog
+
+@available(macCatalyst 13.1, *)
+open class LKSampleHandler: RPBroadcastSampleHandler {
+    private var clientConnection: BroadcastUploadSocketConnection?
+    private var uploader: SampleUploader?
+    private var cancellable = Set<AnyCancellable>()
+
+    override public init() {
+        super.init()
+        bootstrapLogging()
+        logger.info("LKSampleHandler created")
+
+        let socketPath = BroadcastBundleInfo.socketPath
+        if socketPath == nil {
+            logger.error("Bundle settings improperly configured for screen capture")
+        }
+        if let connection = BroadcastUploadSocketConnection(filePath: socketPath ?? "") {
+            clientConnection = connection
+            setupConnection()
+
+            uploader = SampleUploader(connection: connection)
         }
 
-        public var socketFilePath: String {
-            guard let appGroupIdentifier,
-                  let sharedContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
-            else {
-                return ""
+        DarwinNotificationCenter.shared
+            .publisher(for: .broadcastRequestStop)
+            .sink { [weak self] _ in
+                logger.info("Received stop request")
+                self?.finishBroadcastWithoutError()
             }
+            .store(in: &cancellable)
+    }
 
-            return sharedContainer.appendingPathComponent(BroadcastScreenCapturer.kRTCScreensharingSocketFD).path
-        }
+    override public func broadcastStarted(withSetupInfo _: [String: NSObject]?) {
+        // User has requested to start the broadcast. Setup info from the UI extension can be supplied but optional.
+        logger.info("Broadcast started")
+        DarwinNotificationCenter.shared.postNotification(.broadcastStarted)
+        openConnection()
+    }
 
-        override public init() {
-            super.init()
+    override public func broadcastPaused() {
+        // User has requested to pause the broadcast. Samples will stop being delivered.
+        logger.info("Broadcast paused")
+    }
 
-            if let connection = BroadcastUploadSocketConnection(filePath: socketFilePath) {
-                clientConnection = connection
-                setupConnection()
+    override public func broadcastResumed() {
+        // User has requested to resume the broadcast. Samples delivery will resume.
+        logger.info("Broadcast resumed")
+    }
 
-                uploader = SampleUploader(connection: connection)
-            }
-        }
+    override public func broadcastFinished() {
+        // User has requested to finish the broadcast.
+        logger.info("Broadcast finished")
+        DarwinNotificationCenter.shared.postNotification(.broadcastStopped)
+        clientConnection?.close()
+    }
 
-        override public func broadcastStarted(withSetupInfo _: [String: NSObject]?) {
-            // User has requested to start the broadcast. Setup info from the UI extension can be supplied but optional.d
-            DarwinNotificationCenter.shared.postNotification(.broadcastStarted)
-            openConnection()
-        }
-
-        override public func broadcastPaused() {
-            // User has requested to pause the broadcast. Samples will stop being delivered.
-        }
-
-        override public func broadcastResumed() {
-            // User has requested to resume the broadcast. Samples delivery will resume.
-        }
-
-        override public func broadcastFinished() {
-            // User has requested to finish the broadcast.
-            DarwinNotificationCenter.shared.postNotification(.broadcastStopped)
-            clientConnection?.close()
-        }
-
-        override public func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
-            switch sampleBufferType {
-            case RPSampleBufferType.video:
-                uploader?.send(sample: sampleBuffer)
-            default:
-                break
-            }
-        }
-
-        private func setupConnection() {
-            clientConnection?.didClose = { [weak self] error in
-                logger.log(level: .debug, "client connection did close \(String(describing: error))")
-
-                if let error {
-                    self?.finishBroadcastWithError(error)
-                } else {
-                    // the displayed failure message is more user friendly when using NSError instead of Error
-                    let LKScreenSharingStopped = 10001
-                    let customError = NSError(domain: RPRecordingErrorDomain, code: LKScreenSharingStopped, userInfo: [NSLocalizedDescriptionKey: "Screen sharing stopped"])
-                    self?.finishBroadcastWithError(customError)
-                }
-            }
-        }
-
-        private func openConnection() {
-            let queue = DispatchQueue(label: "broadcast.connectTimer")
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now(), repeating: .milliseconds(100), leeway: .milliseconds(500))
-            timer.setEventHandler { [weak self] in
-                guard self?.clientConnection?.open() == true else {
-                    return
-                }
-
-                timer.cancel()
-            }
-
-            timer.resume()
+    override public func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
+        switch sampleBufferType {
+        case RPSampleBufferType.video:
+            uploader?.send(sample: sampleBuffer)
+        default:
+            break
         }
     }
+
+    /// Override point to change the behavior when the socket connection has closed.
+    /// The default behavior is to pass errors through, and otherwise show nothing to the user.
+    ///
+    /// You should call `finishBroadcastWithError` in your implementation, but you can
+    /// add custom logging or present a custom error to the user instead.
+    ///
+    /// To present a custom error message:
+    ///   ```
+    ///   self.finishBroadcastWithError(NSError(
+    ///     domain: RPRecordingErrorDomain,
+    ///     code: 10001,
+    ///     userInfo: [NSLocalizedDescriptionKey: "My Custom Error Message"]
+    ///   ))
+    ///   ```
+    open func connectionDidClose(error: Error?) {
+        if let error {
+            finishBroadcastWithError(error)
+        } else {
+            finishBroadcastWithoutError()
+        }
+    }
+
+    private func finishBroadcastWithoutError() {
+        LKObjCHelpers.finishBroadcastWithoutError(self)
+    }
+
+    private func setupConnection() {
+        clientConnection?.didClose = { [weak self] error in
+            logger.log(level: .debug, "client connection did close \(String(describing: error))")
+            guard let self else {
+                return
+            }
+
+            self.connectionDidClose(error: error)
+        }
+    }
+
+    private func openConnection() {
+        let queue = DispatchQueue(label: "broadcast.connectTimer")
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(100), leeway: .milliseconds(500))
+        timer.setEventHandler { [weak self] in
+            guard self?.clientConnection?.open() == true else {
+                return
+            }
+
+            timer.cancel()
+        }
+
+        timer.resume()
+    }
+
+    // MARK: - Logging
+
+    /// Whether or not to bootstrap the logging system when initialized.
+    ///
+    /// Disabled by default. Enable by overriding this property to return true.
+    ///
+    open var enableLogging: Bool { false }
+
+    /// Whether or not to include debug and trace messages in log output.
+    ///
+    /// Disabled by default. Enable by overriding this property to return true.
+    /// - SeeAlso: ``enableLogging``
+    ///
+    open var verboseLogging: Bool { false }
+
+    private func bootstrapLogging() {
+        guard enableLogging else { return }
+
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? ""
+        let logger = OSLog(subsystem: bundleIdentifier, category: "LKSampleHandler")
+        let logLevel = verboseLogging ? Logger.Level.trace : .info
+
+        LoggingSystem.bootstrap { _ in
+            var logHandler = OSLogHandler(logger)
+            logHandler.logLevel = logLevel
+            return logHandler
+        }
+    }
+}
 
 #endif

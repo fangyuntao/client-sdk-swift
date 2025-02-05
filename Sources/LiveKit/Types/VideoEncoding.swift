@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@
 import Foundation
 
 @objc
-public class VideoEncoding: NSObject, MediaEncoding {
+public final class VideoEncoding: NSObject, MediaEncoding, Sendable {
     @objc
-    public var maxBitrate: Int
+    public let maxBitrate: Int
 
     @objc
-    public var maxFps: Int
+    public let maxFps: Int
 
     @objc
     public init(maxBitrate: Int, maxFps: Int) {

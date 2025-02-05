@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,19 @@ import Foundation
 import SwiftUI
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
-#if os(iOS)
-    public typealias NativeViewRepresentableType = UIViewRepresentable
+#if os(iOS) || os(visionOS) || os(tvOS)
+public typealias NativeViewRepresentableType = UIViewRepresentable
 #elseif os(macOS)
-    public typealias NativeViewRepresentableType = NSViewRepresentable
+public typealias NativeViewRepresentableType = NSViewRepresentable
 #endif
 
 // multiplatform version of UI/NSViewRepresentable
-protocol NativeViewRepresentable: NativeViewRepresentableType {
+public protocol NativeViewRepresentable: NativeViewRepresentableType {
     /// The type of view to present.
     associatedtype ViewType: NativeViewType
 
@@ -39,31 +39,31 @@ protocol NativeViewRepresentable: NativeViewRepresentableType {
     static func dismantleView(_ nsView: Self.ViewType, coordinator: Self.Coordinator)
 }
 
-extension NativeViewRepresentable {
-    #if os(iOS)
-        public func makeUIView(context: Context) -> Self.ViewType {
-            makeView(context: context)
-        }
+public extension NativeViewRepresentable {
+    #if os(iOS) || os(visionOS) || os(tvOS)
+    func makeUIView(context: Context) -> Self.ViewType {
+        makeView(context: context)
+    }
 
-        public func updateUIView(_ view: Self.ViewType, context: Context) {
-            updateView(view, context: context)
-        }
+    func updateUIView(_ view: Self.ViewType, context: Context) {
+        updateView(view, context: context)
+    }
 
-        public static func dismantleUIView(_ view: Self.ViewType, coordinator: Self.Coordinator) {
-            dismantleView(view, coordinator: coordinator)
-        }
+    static func dismantleUIView(_ view: Self.ViewType, coordinator: Self.Coordinator) {
+        dismantleView(view, coordinator: coordinator)
+    }
 
     #elseif os(macOS)
-        public func makeNSView(context: Context) -> Self.ViewType {
-            makeView(context: context)
-        }
+    func makeNSView(context: Context) -> Self.ViewType {
+        makeView(context: context)
+    }
 
-        public func updateNSView(_ view: Self.ViewType, context: Context) {
-            updateView(view, context: context)
-        }
+    func updateNSView(_ view: Self.ViewType, context: Context) {
+        updateView(view, context: context)
+    }
 
-        public static func dismantleNSView(_ view: Self.ViewType, coordinator: Self.Coordinator) {
-            dismantleView(view, coordinator: coordinator)
-        }
+    static func dismantleNSView(_ view: Self.ViewType, coordinator: Self.Coordinator) {
+        dismantleView(view, coordinator: coordinator)
+    }
     #endif
 }

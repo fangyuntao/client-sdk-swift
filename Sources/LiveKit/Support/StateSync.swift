@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import Combine
 import Foundation
 
 @dynamicMemberLookup
-final class StateSync<State> {
+public final class StateSync<State>: @unchecked Sendable {
     // MARK: - Types
 
-    typealias OnDidMutate = (_ newState: State, _ oldState: State) -> Void
+    public typealias OnDidMutate = (_ newState: State, _ oldState: State) -> Void
 
     // MARK: - Public
 
@@ -69,13 +69,13 @@ final class StateSync<State> {
     }
 
     // property read sync
-    subscript<Property>(dynamicMember keyPath: KeyPath<State, Property>) -> Property {
+    public subscript<Property>(dynamicMember keyPath: KeyPath<State, Property>) -> Property {
         _lock.sync { _state[keyPath: keyPath] }
     }
 }
 
 extension StateSync: CustomStringConvertible {
-    var description: String {
+    public var description: String {
         "StateSync(\(String(describing: copy()))"
     }
 }

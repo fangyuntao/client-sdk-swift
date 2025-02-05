@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,36 +16,48 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
-public class AudioCaptureOptions: NSObject, CaptureOptions {
+public final class AudioCaptureOptions: NSObject, CaptureOptions, Sendable {
+    public static let noProcessing = AudioCaptureOptions(
+        echoCancellation: false,
+        autoGainControl: false,
+        noiseSuppression: false,
+        highpassFilter: false,
+        typingNoiseDetection: false
+    )
+
+    /// Whether to enable software (WebRTC's) echo cancellation.
+    /// By default, Apple's voice processing is already enabled.
+    /// See ``AudioManager/isVoiceProcessingBypassed`` for details.
     @objc
     public let echoCancellation: Bool
+
+    /// Whether to enable software (WebRTC's) gain control.
+    /// By default, Apple's gain control is already enabled.
+    /// See ``AudioManager/isVoiceProcessingAGCEnabled`` for details.
+    @objc
+    public let autoGainControl: Bool
 
     @objc
     public let noiseSuppression: Bool
 
     @objc
-    public let autoGainControl: Bool
+    public let highpassFilter: Bool
 
     @objc
     public let typingNoiseDetection: Bool
 
-    @objc
-    public let highpassFilter: Bool
-
-    @objc
-    public let experimentalNoiseSuppression: Bool = false
-
-    @objc
-    public let experimentalAutoGainControl: Bool = false
-
-    public init(echoCancellation: Bool = true,
-                noiseSuppression: Bool = true,
-                autoGainControl: Bool = true,
-                typingNoiseDetection: Bool = true,
-                highpassFilter: Bool = true)
+    public init(echoCancellation: Bool = false,
+                autoGainControl: Bool = false,
+                noiseSuppression: Bool = false,
+                highpassFilter: Bool = false,
+                typingNoiseDetection: Bool = false)
     {
         self.echoCancellation = echoCancellation
         self.noiseSuppression = noiseSuppression
@@ -62,9 +74,7 @@ public class AudioCaptureOptions: NSObject, CaptureOptions {
             noiseSuppression == other.noiseSuppression &&
             autoGainControl == other.autoGainControl &&
             typingNoiseDetection == other.typingNoiseDetection &&
-            highpassFilter == other.highpassFilter &&
-            experimentalNoiseSuppression == other.experimentalNoiseSuppression &&
-            experimentalAutoGainControl == other.experimentalAutoGainControl
+            highpassFilter == other.highpassFilter
     }
 
     override public var hash: Int {
@@ -74,8 +84,17 @@ public class AudioCaptureOptions: NSObject, CaptureOptions {
         hasher.combine(autoGainControl)
         hasher.combine(typingNoiseDetection)
         hasher.combine(highpassFilter)
-        hasher.combine(experimentalNoiseSuppression)
-        hasher.combine(experimentalAutoGainControl)
         return hasher.finalize()
+    }
+}
+
+// Internal
+extension AudioCaptureOptions {
+    func toFeatures() -> Set<Livekit_AudioTrackFeature> {
+        Set([
+            echoCancellation ? .tfEchoCancellation : nil,
+            noiseSuppression ? .tfNoiseSuppression : nil,
+            autoGainControl ? .tfAutoGainControl : nil,
+        ].compactMap { $0 })
     }
 }

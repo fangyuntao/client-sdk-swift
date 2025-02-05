@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,14 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
-public class LocalVideoTrack: Track, LocalTrack, VideoTrack {
+public class LocalVideoTrack: Track, LocalTrack {
     @objc
     public internal(set) var capturer: VideoCapturer
 
@@ -31,7 +35,7 @@ public class LocalVideoTrack: Track, LocalTrack, VideoTrack {
          videoSource: LKRTCVideoSource,
          reportStatistics: Bool)
     {
-        let rtcTrack = Engine.createVideoTrack(source: videoSource)
+        let rtcTrack = RTC.createVideoTrack(source: videoSource)
         rtcTrack.isEnabled = true
 
         self.capturer = capturer
@@ -63,19 +67,27 @@ public class LocalVideoTrack: Track, LocalTrack, VideoTrack {
     }
 }
 
-public extension LocalVideoTrack {
-    func add(videoRenderer: VideoRenderer) {
-        super._add(videoRenderer: videoRenderer)
+// MARK: - VideoTrack Protocol
+
+extension LocalVideoTrack: VideoTrack {
+    public func add(videoRenderer: VideoRenderer) {
+        capturer.rendererDelegates.add(delegate: videoRenderer)
     }
 
-    func remove(videoRenderer: VideoRenderer) {
-        super._remove(videoRenderer: videoRenderer)
+    public func remove(videoRenderer: VideoRenderer) {
+        capturer.rendererDelegates.remove(delegate: videoRenderer)
     }
 }
 
 public extension LocalVideoTrack {
     var publishOptions: TrackPublishOptions? { super._state.lastPublishOptions }
     var publishState: Track.PublishState { super._state.publishState }
+
+    /// Convenience access to ``VideoCapturer/processor``.
+    var processor: VideoProcessor? {
+        get { capturer._state.processor }
+        set { capturer._state.mutate { $0.processor = newValue } }
+    }
 }
 
 public extension LocalVideoTrack {

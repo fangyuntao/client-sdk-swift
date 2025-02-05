@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,37 +14,34 @@
  * limitations under the License.
  */
 
+import AVFoundation
 import CoreMedia
-import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
+/// Used to observe audio buffers before playback, e.g. for visualization, recording, etc
+/// - Note: AudioRenderer is not suitable for buffer modification. If you need to modify the buffer, use `AudioCustomProcessingDelegate` instead.
 @objc
 public protocol AudioRenderer {
-    /// CMSampleBuffer for this track.
-    func render(sampleBuffer: CMSampleBuffer)
+    @objc
+    func render(pcmBuffer: AVAudioPCMBuffer)
 }
 
-class AudioRendererAdapter: NSObject, LKRTCAudioRenderer {
-    private weak var target: AudioRenderer?
+class AudioRendererAdapter: MulticastDelegate<AudioRenderer>, LKRTCAudioRenderer {
+    //
+    typealias Delegate = AudioRenderer
 
-    init(target: AudioRenderer) {
-        self.target = target
+    init() {
+        super.init(label: "AudioRendererAdapter")
     }
 
-    func render(sampleBuffer: CMSampleBuffer) {
-        target?.render(sampleBuffer: sampleBuffer)
-    }
+    // MARK: - LKRTCAudioRenderer
 
-    // Proxy the equality operators
-
-    override func isEqual(_ object: Any?) -> Bool {
-        guard let other = object as? AudioRendererAdapter else { return false }
-        return target === other.target
-    }
-
-    override var hash: Int {
-        guard let target else { return 0 }
-        return ObjectIdentifier(target).hashValue
+    func render(pcmBuffer: AVAudioPCMBuffer) {
+        notify { $0.render(pcmBuffer: pcmBuffer) }
     }
 }

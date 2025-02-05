@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 import Foundation
 
 @objc
-public class ScreenShareCaptureOptions: NSObject, VideoCaptureOptions {
+public final class ScreenShareCaptureOptions: NSObject, VideoCaptureOptions, Sendable {
     @objc
     public let dimensions: Dimensions
 
@@ -28,16 +28,28 @@ public class ScreenShareCaptureOptions: NSObject, VideoCaptureOptions {
     @objc
     public let showCursor: Bool
 
+    /// Use broadcast extension for screen capture (iOS only).
+    ///
+    /// If a broadcast extension has been properly configured, this defaults to `true`.
+    ///
     @objc
     public let useBroadcastExtension: Bool
 
     @objc
     public let includeCurrentApplication: Bool
 
+    public static let defaultToBroadcastExtension: Bool = {
+        #if os(iOS)
+        return BroadcastBundleInfo.hasExtension
+        #else
+        return false
+        #endif
+    }()
+
     public init(dimensions: Dimensions = .h1080_169,
-                fps: Int = 15,
+                fps: Int = 30,
                 showCursor: Bool = true,
-                useBroadcastExtension: Bool = false,
+                useBroadcastExtension: Bool = defaultToBroadcastExtension,
                 includeCurrentApplication: Bool = false)
     {
         self.dimensions = dimensions

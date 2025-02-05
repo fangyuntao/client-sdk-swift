@@ -11,7 +11,7 @@
 # iOS/macOS Swift SDK for LiveKit
 
 <!--BEGIN_DESCRIPTION-->
-Use this SDK to add real-time video, audio and data features to your Swift app. By connecting to a self- or cloud-hosted <a href="https://livekit.io/">LiveKit</a> server, you can quickly build applications like interactive live streaming or video calls with just a few lines of code.
+Use this SDK to add realtime video, audio and data features to your Swift app. By connecting to <a href="https://livekit.io/">LiveKit</a> Cloud or a self-hosted server, you can quickly build applications such as multi-modal AI, live streaming, or video calls with just a few lines of code.
 <!--END_DESCRIPTION-->
 
 ## Docs & Example app
@@ -38,7 +38,7 @@ Add the dependency and also to your target
 let package = Package(
   ...
   dependencies: [
-    .package(name: "LiveKit", url: "https://github.com/livekit/client-sdk-swift.git", .upToNextMajor("2.0.4")),
+    .package(name: "LiveKit", url: "https://github.com/livekit/client-sdk-swift.git", .upToNextMajor("2.1.1")),
   ],
   targets: [
     .target(
@@ -88,15 +88,17 @@ class RoomViewController: UIViewController {
         let url = "ws://your_host"
         let token = "your_jwt_token"
 
-        do {
-            try await room.connect(url: url, token: token)
-            // Connection successful...
+        Task {
+            do {
+                try await room.connect(url: url, token: token)
+                // Connection successful...
 
-            // Publishing camera & mic...
-            try await room.localParticipant.setCamera(enabled: true)
-            try await room.localParticipant.setMicrophone(enabled: true)
-        } catch let error in {
-            // Failed to connect
+                // Publishing camera & mic...
+                try await room.localParticipant.setCamera(enabled: true)
+                try await room.localParticipant.setMicrophone(enabled: true)
+            } catch {
+                // Failed to connect
+            }
         }
     }
 }
@@ -104,16 +106,16 @@ class RoomViewController: UIViewController {
 extension RoomViewController: RoomDelegate {
 
     func room(_: Room, participant _: LocalParticipant, didPublishTrack publication: LocalTrackPublication) {
-        guard let track = publication?.track as? VideoTrack else { return }
+        guard let track = publication.track as? VideoTrack else { return }
         DispatchQueue.main.async {
-            localVideoView.track = track
+            self.localVideoView.track = track
         }
     }
 
     func room(_: Room, participant _: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
-        guard let track = publication?.track as? VideoTrack else { return }
+        guard let track = publication.track as? VideoTrack else { return }
         DispatchQueue.main.async {
-            remoteVideoView.track = track
+            self.remoteVideoView.track = track
         }
     }
 }
@@ -121,7 +123,7 @@ extension RoomViewController: RoomDelegate {
 
 ### Screen Sharing
 
-See [iOS Screen Sharing instructions](https://github.com/livekit/client-sdk-swift/wiki/iOS-Screen-Sharing).
+See [iOS Screen Sharing instructions](Docs/ios-screen-sharing.md).
 
 ## Integration Notes
 
@@ -146,6 +148,24 @@ LiveKit will automatically manage the underlying `AVAudioSession` while connecte
 `playAndRecord`. In general, it'll pick sane defaults and do the right thing.
 
 However, if you'd like to customize this behavior, you would override `AudioManager.customConfigureAudioSessionFunc` to manage the underlying session on your own. See [example here](https://github.com/livekit/client-sdk-swift/blob/1f5959f787805a4b364f228ccfb413c1c4944748/Sources/LiveKit/Track/AudioManager.swift#L153) for the default behavior.
+
+### Integration with CallKit
+
+To integrate with CallKit for background-triggered incoming calls, LiveKit's audio session must be synchronized with CallKit's audio session:
+
+1. Add `import LiveKitWebRTC` to your CallProvider file.
+2. In your `CXProviderDelegate` implementation, add the following:
+
+```swift
+func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession){
+    LKRTCAudioSession.sharedInstance().audioSessionDidActivate(audioSession)
+    // ...
+}
+func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+    LKRTCAudioSession.sharedInstance().audioSessionDidDeactivate(audioSession)
+    // ...
+}
+```
 
 ### iOS Simulator limitations
 
@@ -241,11 +261,12 @@ Please join us on [Slack](https://livekit.io/join-slack) to get help from our de
 <br/><table>
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>
 <tbody>
-<tr><td>Real-time SDKs</td><td><a href="https://github.com/livekit/components-js">React Components</a> · <a href="https://github.com/livekit/client-sdk-js">JavaScript</a> · <b>iOS/macOS</b> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <a href="https://github.com/livekit/client-sdk-flutter">Flutter</a> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/client-sdk-rust">Rust</a> · <a href="https://github.com/livekit/client-sdk-python">Python</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (web)</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity (beta)</a></td></tr><tr></tr>
-<tr><td>Server APIs</td><td><a href="https://github.com/livekit/server-sdk-js">Node.js</a> · <a href="https://github.com/livekit/server-sdk-go">Golang</a> · <a href="https://github.com/livekit/server-sdk-ruby">Ruby</a> · <a href="https://github.com/livekit/server-sdk-kotlin">Java/Kotlin</a> · <a href="https://github.com/livekit/client-sdk-python">Python</a> · <a href="https://github.com/livekit/client-sdk-rust">Rust</a> · <a href="https://github.com/agence104/livekit-server-sdk-php">PHP (community)</a></td></tr><tr></tr>
-<tr><td>Agents Frameworks</td><td><a href="https://github.com/livekit/agents">Python</a> · <a href="https://github.com/livekit/agent-playground">Playground</a></td></tr><tr></tr>
-<tr><td>Services</td><td><a href="https://github.com/livekit/livekit">Livekit server</a> · <a href="https://github.com/livekit/egress">Egress</a> · <a href="https://github.com/livekit/ingress">Ingress</a> · <a href="https://github.com/livekit/sip">SIP</a></td></tr><tr></tr>
-<tr><td>Resources</td><td><a href="https://docs.livekit.io">Docs</a> · <a href="https://github.com/livekit-examples">Example apps</a> · <a href="https://livekit.io/cloud">Cloud</a> · <a href="https://docs.livekit.io/oss/deployment">Self-hosting</a> · <a href="https://github.com/livekit/livekit-cli">CLI</a></td></tr>
+<tr><td>LiveKit SDKs</td><td><a href="https://github.com/livekit/client-sdk-js">Browser</a> · <b>iOS/macOS/visionOS</b> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <a href="https://github.com/livekit/client-sdk-flutter">Flutter</a> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (WebGL)</a></td></tr><tr></tr>
+<tr><td>Server APIs</td><td><a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/server-sdk-go">Golang</a> · <a href="https://github.com/livekit/server-sdk-ruby">Ruby</a> · <a href="https://github.com/livekit/server-sdk-kotlin">Java/Kotlin</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/agence104/livekit-server-sdk-php">PHP (community)</a> · <a href="https://github.com/pabloFuente/livekit-server-sdk-dotnet">.NET (community)</a></td></tr><tr></tr>
+<tr><td>UI Components</td><td><a href="https://github.com/livekit/components-js">React</a> · <a href="https://github.com/livekit/components-android">Android Compose</a> · <a href="https://github.com/livekit/components-swift">SwiftUI</a></td></tr><tr></tr>
+<tr><td>Agents Frameworks</td><td><a href="https://github.com/livekit/agents">Python</a> · <a href="https://github.com/livekit/agents-js">Node.js</a> · <a href="https://github.com/livekit/agent-playground">Playground</a></td></tr><tr></tr>
+<tr><td>Services</td><td><a href="https://github.com/livekit/livekit">LiveKit server</a> · <a href="https://github.com/livekit/egress">Egress</a> · <a href="https://github.com/livekit/ingress">Ingress</a> · <a href="https://github.com/livekit/sip">SIP</a></td></tr><tr></tr>
+<tr><td>Resources</td><td><a href="https://docs.livekit.io">Docs</a> · <a href="https://github.com/livekit-examples">Example apps</a> · <a href="https://livekit.io/cloud">Cloud</a> · <a href="https://docs.livekit.io/home/self-hosting/deployment">Self-hosting</a> · <a href="https://github.com/livekit/livekit-cli">CLI</a></td></tr>
 </tbody>
 </table>
 <!--END_REPO_NAV-->

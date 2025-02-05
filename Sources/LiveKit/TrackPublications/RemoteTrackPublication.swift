@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import CoreGraphics
-import Foundation
-
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
 public enum SubscriptionState: Int, Codable {
@@ -73,9 +74,9 @@ public class RemoteTrackPublication: TrackPublication {
 
         _state.mutate { $0.isSubscribePreferred = newValue }
 
-        try await room.engine.signalClient.sendUpdateSubscription(participantSid: participantSid,
-                                                                  trackSid: sid,
-                                                                  isSubscribed: newValue)
+        try await room.signalClient.sendUpdateSubscription(participantSid: participantSid,
+                                                           trackSid: sid,
+                                                           isSubscribed: newValue)
     }
 
     /// Enable or disable server from sending down data for this track.
@@ -89,7 +90,7 @@ public class RemoteTrackPublication: TrackPublication {
 
         try await checkUserCanModifyTrackSettings()
 
-        let settings = trackSettings.copyWith(isEnabled: newValue)
+        let settings = trackSettings.copyWith(isEnabled: .value(newValue))
         // Attempt to set the new settings
         try await send(trackSettings: settings)
     }
@@ -103,7 +104,7 @@ public class RemoteTrackPublication: TrackPublication {
 
         try await checkUserCanModifyTrackSettings()
 
-        let settings = trackSettings.copyWith(preferredFPS: newValue)
+        let settings = trackSettings.copyWith(preferredFPS: .value(newValue))
         // Attempt to set the new settings
         try await send(trackSettings: settings)
     }
@@ -120,10 +121,7 @@ public class RemoteTrackPublication: TrackPublication {
 
         try await checkUserCanModifyTrackSettings()
 
-        let settings = trackSettings.copyWith(
-            dimensions: newValue,
-            videoQuality: nil
-        )
+        let settings = trackSettings.copyWith(dimensions: .value(newValue))
         // Attempt to set the new settings
         try await send(trackSettings: settings)
     }
@@ -141,10 +139,7 @@ public class RemoteTrackPublication: TrackPublication {
 
         try await checkUserCanModifyTrackSettings()
 
-        let settings = trackSettings.copyWith(
-            dimensions: nil,
-            videoQuality: newValue
-        )
+        let settings = trackSettings.copyWith(videoQuality: .value(newValue))
         // Attempt to set the new settings
         try await send(trackSettings: settings)
     }
@@ -156,7 +151,7 @@ public class RemoteTrackPublication: TrackPublication {
         let oldValue = await super.set(track: newValue)
         if newValue != oldValue {
             // always suspend adaptiveStream timer first
-            await _asTimer.cancel()
+            _asTimer.cancel()
 
             if let newValue {
                 // Copy meta-data to track
@@ -172,10 +167,10 @@ public class RemoteTrackPublication: TrackPublication {
 
                 // start adaptiveStream timer only if it's a video track
                 if isAdaptiveStreamEnabled {
-                    await _asTimer.setTimerBlock {
+                    _asTimer.setTimerBlock {
                         [weak self] in await self?.onAdaptiveStreamTimer()
                     }
-                    await _asTimer.restart()
+                    _asTimer.restart()
                 }
 
                 // if new Track has been set to this RemoteTrackPublication,
@@ -204,7 +199,7 @@ public class RemoteTrackPublication: TrackPublication {
 // MARK: - Private
 
 private extension RemoteTrackPublication {
-    var isAdaptiveStreamEnabled: Bool { (participant?._room?._state.options ?? RoomOptions()).adaptiveStream && kind == .video }
+    var isAdaptiveStreamEnabled: Bool { (participant?._room?._state.roomOptions ?? RoomOptions()).adaptiveStream && kind == .video }
 
     var engineConnectionState: ConnectionState {
         guard let participant, let room = participant._room else {
@@ -212,7 +207,7 @@ private extension RemoteTrackPublication {
             return .disconnected
         }
 
-        return room.engine._state.connectionState
+        return room._state.connectionState
     }
 
     func checkUserCanModifyTrackSettings() async throws {
@@ -294,7 +289,7 @@ extension RemoteTrackPublication {
 
         // Attempt to set the new settings
         do {
-            try await room.engine.signalClient.sendUpdateTrackSettings(trackSid: sid, settings: newValue)
+            try await room.signalClient.sendUpdateTrackSettings(trackSid: sid, settings: newValue)
             _state.mutate { $0.isSendingTrackSettings = false }
         } catch {
             // Revert track settings on failure
@@ -348,7 +343,7 @@ extension RemoteTrackPublication {
             return
         }
 
-        let videoRenderers = track?.videoRenderers.allObjects ?? []
+        let videoRenderers = track?._state.videoRenderers.allObjects ?? []
         let isEnabled = videoRenderers.containsOneOrMoreAdaptiveStreamEnabledRenderers()
         var dimensions: Dimensions = .zero
 
@@ -358,7 +353,10 @@ extension RemoteTrackPublication {
                                     height: Int32(ceil(maxSize.height)))
         }
 
-        let newSettings = _state.trackSettings.copyWith(isEnabled: isEnabled, dimensions: dimensions)
+        let newSettings = _state.trackSettings.copyWith(
+            isEnabled: .value(isEnabled),
+            dimensions: .value(dimensions)
+        )
 
         guard _state.trackSettings != newSettings else {
             // no settings updated

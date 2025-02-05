@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,11 @@
 import CoreMedia
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 /// A ``VideoCapturer`` that can capture ``CMSampleBuffer``s.
 ///
@@ -29,10 +33,10 @@ import Foundation
 /// since dimensions must be resolved at the time of publishing (to compute video parameters).
 ///
 public class BufferCapturer: VideoCapturer {
-    private let capturer = Engine.createVideoCapturer()
+    private let capturer = RTC.createVideoCapturer()
 
     /// The ``BufferCaptureOptions`` used for this capturer.
-    public var options: BufferCaptureOptions
+    public let options: BufferCaptureOptions
 
     init(delegate: LKRTCVideoCapturerDelegate, options: BufferCaptureOptions) {
         self.options = options
@@ -41,43 +45,12 @@ public class BufferCapturer: VideoCapturer {
 
     /// Capture a ``CMSampleBuffer``.
     public func capture(_ sampleBuffer: CMSampleBuffer) {
-        delegate?.capturer(capturer, didCapture: sampleBuffer) { sourceDimensions in
-
-            let targetDimensions = sourceDimensions
-                .aspectFit(size: self.options.dimensions.max)
-                .toEncodeSafeDimensions()
-
-            defer { self.dimensions = targetDimensions }
-
-            guard let videoSource = self.delegate as? LKRTCVideoSource else { return }
-            videoSource.adaptOutputFormat(toWidth: targetDimensions.width,
-                                          height: targetDimensions.height,
-                                          fps: Int32(self.options.fps))
-        }
+        capture(sampleBuffer: sampleBuffer, capturer: capturer, options: options)
     }
 
     /// Capture a ``CVPixelBuffer``.
-    public func capture(_ pixelBuffer: CVPixelBuffer,
-                        timeStampNs: Int64 = VideoCapturer.createTimeStampNs(),
-                        rotation: VideoRotation = ._0)
-    {
-        delegate?.capturer(capturer,
-                           didCapture: pixelBuffer,
-                           timeStampNs: timeStampNs,
-                           rotation: rotation.toRTCType())
-        { sourceDimensions in
-
-            let targetDimensions = sourceDimensions
-                .aspectFit(size: self.options.dimensions.max)
-                .toEncodeSafeDimensions()
-
-            defer { self.dimensions = targetDimensions }
-
-            guard let videoSource = self.delegate as? LKRTCVideoSource else { return }
-            videoSource.adaptOutputFormat(toWidth: targetDimensions.width,
-                                          height: targetDimensions.height,
-                                          fps: Int32(self.options.fps))
-        }
+    public func capture(_ pixelBuffer: CVPixelBuffer, timeStampNs: Int64 = VideoCapturer.createTimeStampNs(), rotation: VideoRotation = ._0) {
+        capture(pixelBuffer: pixelBuffer, capturer: capturer, timeStampNs: timeStampNs, rotation: rotation, options: options)
     }
 }
 
@@ -88,7 +61,7 @@ public extension LocalVideoTrack {
                                   options: BufferCaptureOptions = BufferCaptureOptions(),
                                   reportStatistics: Bool = false) -> LocalVideoTrack
     {
-        let videoSource = Engine.createVideoSource(forScreenShare: source == .screenShareVideo)
+        let videoSource = RTC.createVideoSource(forScreenShare: source == .screenShareVideo)
         let capturer = BufferCapturer(delegate: videoSource, options: options)
         return LocalVideoTrack(name: name,
                                source: source,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 import Foundation
 
-struct TrackSettings: Equatable, Hashable {
+struct TrackSettings: Equatable, Hashable, Sendable {
     let isEnabled: Bool
     let dimensions: Dimensions
     let videoQuality: VideoQuality
@@ -33,14 +33,14 @@ struct TrackSettings: Equatable, Hashable {
         self.preferredFPS = preferredFPS
     }
 
-    func copyWith(isEnabled: Bool? = nil,
-                  dimensions: Dimensions? = nil,
-                  videoQuality: VideoQuality? = nil,
-                  preferredFPS: UInt? = nil) -> TrackSettings
+    func copyWith(isEnabled: ValueOrAbsent<Bool> = .absent,
+                  dimensions: ValueOrAbsent<Dimensions> = .absent,
+                  videoQuality: ValueOrAbsent<VideoQuality> = .absent,
+                  preferredFPS: ValueOrAbsent<UInt> = .absent) -> TrackSettings
     {
-        TrackSettings(enabled: isEnabled ?? self.isEnabled,
-                      dimensions: dimensions ?? self.dimensions,
-                      videoQuality: videoQuality ?? self.videoQuality,
-                      preferredFPS: preferredFPS ?? self.preferredFPS)
+        TrackSettings(enabled: isEnabled.value(ifAbsent: self.isEnabled),
+                      dimensions: dimensions.value(ifAbsent: self.dimensions),
+                      videoQuality: videoQuality.value(ifAbsent: self.videoQuality),
+                      preferredFPS: preferredFPS.value(ifAbsent: self.preferredFPS))
     }
 }

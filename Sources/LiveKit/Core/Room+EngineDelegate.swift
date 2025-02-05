@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,14 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
-extension Room: EngineDelegate {
-    func engine(_: Engine, didMutateState state: Engine.State, oldState: Engine.State) async {
+extension Room {
+    func engine(_: Room, didMutateState state: Room.State, oldState: Room.State) {
         if state.connectionState != oldState.connectionState {
             // connectionState did update
 
@@ -30,10 +34,12 @@ extension Room: EngineDelegate {
 
             // Re-send track permissions
             if case .connected = state.connectionState {
-                do {
-                    try await localParticipant.sendTrackSubscriptionPermissions()
-                } catch {
-                    log("Failed to send track subscription permissions, error: \(error)", .error)
+                Task {
+                    do {
+                        try await localParticipant.sendTrackSubscriptionPermissions()
+                    } catch {
+                        log("Failed to send track subscription permissions, error: \(error)", .error)
+                    }
                 }
             }
 
@@ -53,6 +59,8 @@ extension Room: EngineDelegate {
                 // Re-connecting
                 delegates.notify { $0.roomIsReconnecting?(self) }
             } else if case .disconnected = state.connectionState {
+                // Clear out e2eeManager instance
+                e2eeManager = nil
                 // Disconnected
                 if case .connecting = oldState.connectionState {
                     delegates.notify { $0.room?(self, didFailToConnectWithError: oldState.disconnectError) }
@@ -84,7 +92,7 @@ extension Room: EngineDelegate {
         }
     }
 
-    func engine(_ engine: Engine, didUpdateSpeakers speakers: [Livekit_SpeakerInfo]) async {
+    func engine(_ engine: Room, didUpdateSpeakers speakers: [Livekit_SpeakerInfo]) {
         let activeSpeakers = _state.mutate { state -> [Participant] in
 
             var activeSpeakers: [Participant] = []
@@ -128,16 +136,14 @@ extension Room: EngineDelegate {
             return activeSpeakers
         }
 
-        engine.executeIfConnected { [weak self] in
-            guard let self else { return }
-
-            self.delegates.notify(label: { "room.didUpdate speakers: \(activeSpeakers)" }) {
+        if case .connected = engine._state.connectionState {
+            delegates.notify(label: { "room.didUpdate speakers: \(activeSpeakers)" }) {
                 $0.room?(self, didUpdateSpeakingParticipants: activeSpeakers)
             }
         }
     }
 
-    func engine(_: Engine, didAddTrack track: LKRTCMediaStreamTrack, rtpReceiver: LKRTCRtpReceiver, stream: LKRTCMediaStream) async {
+    func engine(_: Room, didAddTrack track: LKRTCMediaStreamTrack, rtpReceiver: LKRTCRtpReceiver, stream: LKRTCMediaStream) async {
         let parseResult = parse(streamId: stream.streamId)
         let trackId = parseResult.trackId ?? Track.Sid(from: track.trackId)
 
@@ -162,7 +168,7 @@ extension Room: EngineDelegate {
         }
     }
 
-    func engine(_: Engine, didRemoveTrack track: LKRTCMediaStreamTrack) async {
+    func engine(_: Room, didRemoveTrack track: LKRTCMediaStreamTrack) async {
         // Find the publication
         let trackSid = Track.Sid(from: track.trackId)
         guard let publication = _state.remoteParticipants.values.map(\._state.trackPublications.values).joined()
@@ -170,15 +176,13 @@ extension Room: EngineDelegate {
         await publication.set(track: nil)
     }
 
-    func engine(_ engine: Engine, didReceiveUserPacket packet: Livekit_UserPacket) async {
+    func engine(_ engine: Room, didReceiveUserPacket packet: Livekit_UserPacket) {
         // participant could be null if data broadcasted from server
         let identity = Participant.Identity(from: packet.participantIdentity)
         let participant = _state.remoteParticipants[identity]
 
-        engine.executeIfConnected { [weak self] in
-            guard let self else { return }
-
-            self.delegates.notify(label: { "room.didReceive data: \(packet.payload)" }) {
+        if case .connected = engine._state.connectionState {
+            delegates.notify(label: { "room.didReceive data: \(packet.payload)" }) {
                 $0.room?(self, participant: participant, didReceiveData: packet.payload, forTopic: packet.topic)
             }
 
@@ -188,6 +192,88 @@ extension Room: EngineDelegate {
                     delegate.participant?(participant, didReceiveData: packet.payload, forTopic: packet.topic)
                 }
             }
+        }
+    }
+
+    func room(didReceiveTranscriptionPacket packet: Livekit_Transcription) {
+        // Try to find matching Participant.
+        guard let participant = allParticipants[Participant.Identity(from: packet.transcribedParticipantIdentity)] else {
+            log("[Transcription] Could not find participant: \(packet.transcribedParticipantIdentity)", .warning)
+            return
+        }
+
+        guard let publication = participant._state.read({ $0.trackPublications[Track.Sid(from: packet.trackID)] }) else {
+            log("[Transcription] Could not find publication: \(packet.trackID)", .warning)
+            return
+        }
+
+        guard !packet.segments.isEmpty else {
+            log("[Transcription] Received segments are empty", .warning)
+            return
+        }
+
+        let segments = packet.segments.map { segment in
+            TranscriptionSegment(id: segment.id,
+                                 text: segment.text,
+                                 language: segment.language,
+                                 firstReceivedTime: _state.transcriptionReceivedTimes[segment.id] ?? Date(),
+                                 lastReceivedTime: Date(),
+                                 isFinal: segment.final)
+        }
+
+        _state.mutate { state in
+            for segment in segments {
+                if segment.isFinal {
+                    state.transcriptionReceivedTimes.removeValue(forKey: segment.id)
+                } else {
+                    state.transcriptionReceivedTimes[segment.id] = segment.firstReceivedTime
+                }
+            }
+        }
+
+        delegates.notify {
+            $0.room?(self, participant: participant, trackPublication: publication, didReceiveTranscriptionSegments: segments)
+        }
+
+        participant.delegates.notify {
+            $0.participant?(participant, trackPublication: publication, didReceiveTranscriptionSegments: segments)
+        }
+    }
+
+    func room(didReceiveRpcResponse response: Livekit_RpcResponse) {
+        let (payload, error): (String?, RpcError?) = {
+            switch response.value {
+            case let .payload(v): return (v, nil)
+            case let .error(e): return (nil, RpcError.fromProto(e))
+            default: return (nil, nil)
+            }
+        }()
+
+        localParticipant.handleIncomingRpcResponse(requestId: response.requestID,
+                                                   payload: payload,
+                                                   error: error)
+    }
+
+    func room(didReceiveRpcAck ack: Livekit_RpcAck) {
+        let requestId = ack.requestID
+        localParticipant.handleIncomingRpcAck(requestId: requestId)
+    }
+
+    func room(didReceiveRpcRequest request: Livekit_RpcRequest, from participantIdentity: String) {
+        let callerIdentity = Participant.Identity(from: participantIdentity)
+        let requestId = request.id
+        let method = request.method
+        let payload = request.payload
+        let responseTimeout = TimeInterval(UInt64(request.responseTimeoutMs) / UInt64(msecPerSec))
+        let version = Int(request.version)
+
+        Task {
+            await localParticipant.handleIncomingRpcRequest(callerIdentity: callerIdentity,
+                                                            requestId: requestId,
+                                                            method: method,
+                                                            payload: payload,
+                                                            responseTimeout: responseTimeout,
+                                                            version: version)
         }
     }
 }

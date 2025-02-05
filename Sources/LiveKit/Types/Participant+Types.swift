@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ import Foundation
 
 public extension Participant {
     @objc(ParticipantSid)
-    class Sid: NSObject, Codable {
+    final class Sid: NSObject, Codable, Sendable {
         @objc
         public let stringValue: String
 
@@ -43,11 +43,11 @@ public extension Participant {
     }
 
     @objc(ParticipantIdentity)
-    class Identity: NSObject, Codable {
+    final class Identity: NSObject, Codable, Sendable {
         @objc
         public let stringValue: String
 
-        init(from stringValue: String) {
+        public init(from stringValue: String) {
             self.stringValue = stringValue
         }
 

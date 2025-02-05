@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,44 +17,46 @@
 import Foundation
 
 #if canImport(ReplayKit)
-    import ReplayKit
+import ReplayKit
 #endif
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 public class CameraCapturer: VideoCapturer {
+    /// Current device used for capturing
     @objc
-    public static func captureDevices() -> [AVCaptureDevice] {
-        DispatchQueue.liveKitWebRTC.sync { LKRTCCameraVideoCapturer.captureDevices() }
+    public var device: AVCaptureDevice? { _cameraCapturerState.device }
+
+    /// Current position of the device
+    public var position: AVCaptureDevice.Position { _cameraCapturerState.device?.position ?? .unspecified }
+
+    @objc
+    public var options: CameraCaptureOptions { _cameraCapturerState.options }
+
+    @objc
+    public static func captureDevices() async throws -> [AVCaptureDevice] {
+        try await DeviceManager.shared.devices()
     }
 
     /// Checks whether both front and back capturing devices exist, and can be switched.
     @objc
-    public static func canSwitchPosition() -> Bool {
-        let devices = captureDevices()
+    public static func canSwitchPosition() async throws -> Bool {
+        let devices = try await captureDevices()
         return devices.contains(where: { $0.position == .front }) &&
             devices.contains(where: { $0.position == .back })
     }
 
-    /// Current device used for capturing
-    @objc
-    public private(set) var device: AVCaptureDevice?
-
-    /// Current position of the device
-    public var position: AVCaptureDevice.Position? {
-        device?.position
-    }
-
-    @objc
-    public var options: CameraCaptureOptions
-
     public var isMultitaskingAccessSupported: Bool {
         #if (os(iOS) || os(tvOS)) && !targetEnvironment(macCatalyst)
-            if #available(iOS 16, *, tvOS 17, *) {
-                self.capturer.captureSession.beginConfiguration()
-                defer { self.capturer.captureSession.commitConfiguration() }
-                return self.capturer.captureSession.isMultitaskingCameraAccessSupported
-            }
+        if #available(iOS 16, *, tvOS 17, *) {
+            self.capturer.captureSession.beginConfiguration()
+            defer { self.capturer.captureSession.commitConfiguration() }
+            return self.capturer.captureSession.isMultitaskingCameraAccessSupported
+        }
         #endif
         return false
     }
@@ -62,30 +64,44 @@ public class CameraCapturer: VideoCapturer {
     public var isMultitaskingAccessEnabled: Bool {
         get {
             #if (os(iOS) || os(tvOS)) && !targetEnvironment(macCatalyst)
-                if #available(iOS 16, *, tvOS 17, *) {
-                    return self.capturer.captureSession.isMultitaskingCameraAccessEnabled
-                }
+            if #available(iOS 16, *, tvOS 17, *) {
+                return self.capturer.captureSession.isMultitaskingCameraAccessEnabled
+            }
             #endif
             return false
         }
         set {
             #if (os(iOS) || os(tvOS)) && !targetEnvironment(macCatalyst)
-                if #available(iOS 16, *, tvOS 17, *) {
-                    self.capturer.captureSession.isMultitaskingCameraAccessEnabled = newValue
-                }
+            if #available(iOS 16, *, tvOS 17, *) {
+                self.capturer.captureSession.isMultitaskingCameraAccessEnabled = newValue
+            }
             #endif
         }
     }
 
+    struct State {
+        var options: CameraCaptureOptions
+        var device: AVCaptureDevice?
+    }
+
+    var _cameraCapturerState: StateSync<State>
+
     // Used to hide LKRTCVideoCapturerDelegate symbol
     private lazy var adapter: VideoCapturerDelegateAdapter = .init(cameraCapturer: self)
 
-    // RTCCameraVideoCapturer used internally for now
-    private lazy var capturer: LKRTCCameraVideoCapturer = DispatchQueue.liveKitWebRTC.sync { LKRTCCameraVideoCapturer(delegate: adapter) }
+    public var captureSession: AVCaptureSession {
+        capturer.captureSession
+    }
 
-    init(delegate: LKRTCVideoCapturerDelegate, options: CameraCaptureOptions) {
-        self.options = options
-        super.init(delegate: delegate)
+    // RTCCameraVideoCapturer used internally for now
+    private lazy var capturer: LKRTCCameraVideoCapturer = .init(delegate: adapter)
+
+    init(delegate: LKRTCVideoCapturerDelegate,
+         options: CameraCaptureOptions,
+         processor: VideoProcessor? = nil)
+    {
+        _cameraCapturerState = StateSync(State(options: options))
+        super.init(delegate: delegate, processor: processor)
 
         log("isMultitaskingAccessSupported: \(isMultitaskingAccessSupported)", .info)
     }
@@ -103,14 +119,26 @@ public class CameraCapturer: VideoCapturer {
         return try await set(cameraPosition: position == .front ? .back : .front)
     }
 
-    /// Sets the camera's position to `.front` or `.back` when supported
+    /// Sets the camera's position to `.front` or `.back` when supported.
     @objc
     @discardableResult
     public func set(cameraPosition position: AVCaptureDevice.Position) async throws -> Bool {
         log("set(cameraPosition:) \(position)")
+        let newOptions = options.copyWith(
+            device: .value(nil),
+            position: .value(position)
+        )
+        return try await set(options: newOptions)
+    }
 
-        // update options to use new position
-        options = options.copyWith(position: position)
+    /// Sets new options at runtime and resstarts capturing.
+    @objc
+    @discardableResult
+    public func set(options newOptions: CameraCaptureOptions) async throws -> Bool {
+        log("set(options:) \(options)")
+
+        // Update to new options
+        _cameraCapturerState.mutate { $0.options = newOptions }
 
         // Restart capturer
         return try await restartCapture()
@@ -125,10 +153,36 @@ public class CameraCapturer: VideoCapturer {
         let preferredPixelFormat = capturer.preferredOutputPixelFormat()
         log("CameraCapturer.preferredPixelFormat: \(preferredPixelFormat.toString())")
 
-        let devices = CameraCapturer.captureDevices()
         // TODO: FaceTime Camera for macOS uses .unspecified, fall back to first device
+        var device: AVCaptureDevice? = options.device
 
-        guard let device = devices.first(where: { $0.position == self.options.position }) ?? devices.first else {
+        if device == nil {
+            #if os(iOS) || os(tvOS)
+            var devices: [AVCaptureDevice]
+            if AVCaptureMultiCamSession.isMultiCamSupported {
+                // Get the list of devices already on the shared multi-cam session.
+                let existingDevices = captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }.map(\.device)
+                log("Existing devices: \(existingDevices)")
+                // Compute other multi-cam compatible devices.
+                devices = try await DeviceManager.shared.multiCamCompatibleDevices(for: Set(existingDevices))
+            } else {
+                devices = try await CameraCapturer.captureDevices()
+            }
+            #else
+            var devices = try await CameraCapturer.captureDevices()
+            #endif
+
+            #if !os(visionOS)
+            // Filter by deviceType if specified in options.
+            if let deviceType = options.deviceType {
+                devices = devices.filter { $0.deviceType == deviceType }
+            }
+            #endif
+
+            device = devices.first { $0.position == self.options.position } ?? devices.first
+        }
+
+        guard let device else {
             log("No camera video capture devices available", .error)
             throw LiveKitError(.deviceNotFound, message: "No camera video capture devices available")
         }
@@ -139,7 +193,7 @@ public class CameraCapturer: VideoCapturer {
         let sortedFormats = formats.map { (format: $0, dimensions: Dimensions(from: CMVideoFormatDescriptionGetDimensions($0.formatDescription))) }
             .sorted { $0.dimensions.area < $1.dimensions.area }
 
-        log("sortedFormats: \(sortedFormats.map { "(dimensions: \(String(describing: $0.dimensions)), fps: \(String(describing: $0.format.fpsRange())))" }), target dimensions: \(options.dimensions)")
+        log("sortedFormats: \(sortedFormats.map { "(dimensions: \(String(describing: $0.dimensions)), \(String(describing: $0.format.toDebugString()))" }), target dimensions: \(options.dimensions)")
 
         // default to the largest supported dimensions (backup)
         var selectedFormat = sortedFormats.last
@@ -150,10 +204,10 @@ public class CameraCapturer: VideoCapturer {
             // Use the preferred capture format if specified in options
             selectedFormat = foundFormat
         } else {
-            if let foundFormat = sortedFormats.first(where: { $0.dimensions.area >= self.options.dimensions.area && $0.format.fpsRange().contains(self.options.fps) }) {
+            if let foundFormat = sortedFormats.first(where: { ($0.dimensions.width >= self.options.dimensions.width && $0.dimensions.height >= self.options.dimensions.height) && $0.format.fpsRange().contains(self.options.fps) && $0.format.filterForMulticamSupport }) {
                 // Use the first format that satisfies preferred dimensions & fps
                 selectedFormat = foundFormat
-            } else if let foundFormat = sortedFormats.first(where: { $0.dimensions.area >= self.options.dimensions.area }) {
+            } else if let foundFormat = sortedFormats.first(where: { $0.dimensions.width >= self.options.dimensions.width && $0.dimensions.height >= self.options.dimensions.height }) {
                 // Use the first format that satisfies preferred dimensions (without fps)
                 selectedFormat = foundFormat
             }
@@ -185,20 +239,10 @@ public class CameraCapturer: VideoCapturer {
 
         log("starting camera capturer device: \(device), format: \(selectedFormat), fps: \(selectedFps)(\(fpsRange))", .info)
 
-        // adapt if requested dimensions and camera's dimensions don't match
-        if let videoSource = delegate as? LKRTCVideoSource,
-           selectedFormat.dimensions != self.options.dimensions
-        {
-            // self.log("adaptOutputFormat to: \(options.dimensions) fps: \(self.options.fps)")
-            videoSource.adaptOutputFormat(toWidth: options.dimensions.width,
-                                          height: options.dimensions.height,
-                                          fps: Int32(options.fps))
-        }
-
         try await capturer.startCapture(with: device, format: selectedFormat.format, fps: selectedFps)
 
         // Update internal vars
-        self.device = device
+        _cameraCapturerState.mutate { $0.device = device }
 
         return true
     }
@@ -212,14 +256,15 @@ public class CameraCapturer: VideoCapturer {
         await capturer.stopCapture()
 
         // Update internal vars
-        device = nil
-        dimensions = nil
+        set(dimensions: nil)
+        // Reset state
+        _cameraCapturerState.mutate { $0 = State(options: $0.options) }
 
         return true
     }
 }
 
-class VideoCapturerDelegateAdapter: NSObject, LKRTCVideoCapturerDelegate {
+class VideoCapturerDelegateAdapter: NSObject, LKRTCVideoCapturerDelegate, Loggable {
     weak var cameraCapturer: CameraCapturer?
 
     init(cameraCapturer: CameraCapturer? = nil) {
@@ -228,10 +273,17 @@ class VideoCapturerDelegateAdapter: NSObject, LKRTCVideoCapturerDelegate {
 
     func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) {
         guard let cameraCapturer else { return }
-        // Resolve real dimensions (apply frame rotation)
-        cameraCapturer.dimensions = Dimensions(width: frame.width, height: frame.height).apply(rotation: frame.rotation)
+
+        var frame = frame
+        let adaptOutputFormatEnabled = (frame.width != cameraCapturer.options.dimensions.width || frame.height != cameraCapturer.options.dimensions.height)
+        if adaptOutputFormatEnabled, let newFrame = frame.cropAndScaleFromCenter(targetWidth: cameraCapturer.options.dimensions.width,
+                                                                                 targetHeight: cameraCapturer.options.dimensions.height)
+        {
+            frame = newFrame
+        }
+
         // Pass frame to video source
-        cameraCapturer.delegate?.capturer(capturer, didCapture: frame)
+        cameraCapturer.capture(frame: frame, capturer: capturer, device: cameraCapturer.device, options: cameraCapturer.options)
     }
 }
 
@@ -244,10 +296,13 @@ public extension LocalVideoTrack {
     @objc
     static func createCameraTrack(name: String? = nil,
                                   options: CameraCaptureOptions? = nil,
-                                  reportStatistics: Bool = false) -> LocalVideoTrack
+                                  reportStatistics: Bool = false,
+                                  processor: VideoProcessor? = nil) -> LocalVideoTrack
     {
-        let videoSource = Engine.createVideoSource(forScreenShare: false)
-        let capturer = CameraCapturer(delegate: videoSource, options: options ?? CameraCaptureOptions())
+        let videoSource = RTC.createVideoSource(forScreenShare: false)
+        let capturer = CameraCapturer(delegate: videoSource,
+                                      options: options ?? CameraCaptureOptions(),
+                                      processor: processor)
         return LocalVideoTrack(name: name ?? Track.cameraName,
                                source: .camera,
                                capturer: capturer,
@@ -287,5 +342,71 @@ extension AVCaptureDevice.Format {
         videoSupportedFrameRateRanges.map { $0.toRange() }.reduce(into: 0 ... 0) { result, current in
             result = merge(range: result, with: current)
         }
+    }
+
+    // Used for filtering.
+    // Only include multi-cam supported devices if in multi-cam mode. Otherwise, always include the devices.
+    var filterForMulticamSupport: Bool {
+        #if os(iOS) || os(tvOS)
+        return AVCaptureMultiCamSession.isMultiCamSupported ? isMultiCamSupported : true
+        #else
+        return true
+        #endif
+    }
+}
+
+extension LKRTCVideoFrame {
+    func cropAndScaleFromCenter(
+        targetWidth: Int32,
+        targetHeight: Int32
+    ) -> LKRTCVideoFrame? {
+        // Ensure target dimensions don't exceed source dimensions
+        let scaleWidth: Int32
+        let scaleHeight: Int32
+
+        if targetWidth > width || targetHeight > height {
+            // Calculate scale factor to fit within source dimensions
+            let widthScale = Double(targetWidth) / Double(width) // Scale down factor
+            let heightScale = Double(targetHeight) / Double(height)
+            let scale = max(widthScale, heightScale)
+
+            // Apply scale to target dimensions
+            scaleWidth = Int32(Double(targetWidth) / scale)
+            scaleHeight = Int32(Double(targetHeight) / scale)
+        } else {
+            scaleWidth = targetWidth
+            scaleHeight = targetHeight
+        }
+
+        // Calculate aspect ratios
+        let sourceRatio = Double(width) / Double(height)
+        let targetRatio = Double(scaleWidth) / Double(scaleHeight)
+
+        // Calculate crop dimensions
+        let (cropWidth, cropHeight): (Int32, Int32)
+        if sourceRatio > targetRatio {
+            // Source is wider - crop width
+            cropHeight = height
+            cropWidth = Int32(Double(height) * targetRatio)
+        } else {
+            // Source is taller - crop height
+            cropWidth = width
+            cropHeight = Int32(Double(width) / targetRatio)
+        }
+
+        // Calculate center offsets
+        let offsetX = (width - cropWidth) / 2
+        let offsetY = (height - cropHeight) / 2
+
+        guard let newBuffer = buffer.cropAndScale?(
+            with: offsetX,
+            offsetY: offsetY,
+            cropWidth: cropWidth,
+            cropHeight: cropHeight,
+            scaleWidth: scaleWidth,
+            scaleHeight: scaleHeight
+        ) else { return nil }
+
+        return LKRTCVideoFrame(buffer: newBuffer, rotation: rotation, timeStampNs: timeStampNs)
     }
 }

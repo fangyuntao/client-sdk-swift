@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,11 @@
 
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 extension LKRTCI420Buffer {
     func toPixelBuffer() -> CVPixelBuffer? {
@@ -62,7 +66,7 @@ extension LKRTCI420Buffer {
                                 dstUV: dstUV,
                                 dstStrideUV: Int32(dstUVStride),
                                 width: width,
-                                width: height)
+                                height: height)
 
         } else {
             let dst = CVPixelBufferGetBaseAddress(outputPixelBuffer)

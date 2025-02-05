@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import Combine
 import Foundation
 
 @objc
@@ -23,6 +24,19 @@ public class LocalTrackPublication: TrackPublication {
 
     // stream state is always active for local tracks
     override public var streamState: StreamState { .active }
+
+    // MARK: - Private
+
+    private var _cancellable: AnyCancellable?
+
+    override init(info: Livekit_TrackInfo, participant: Participant) {
+        super.init(info: info, participant: participant)
+
+        // Watch audio manager processor changes.
+        _cancellable = AudioManager.shared.capturePostProcessingDelegateSubject.sink { [weak self] _ in
+            self?.sendAudioTrackFeatures()
+        }
+    }
 
     // MARK: - Private
 
@@ -57,11 +71,13 @@ public class LocalTrackPublication: TrackPublication {
             newLocalVideoTrack.capturer.add(delegate: self)
         }
 
+        sendAudioTrackFeatures()
+
         return oldValue
     }
 
     deinit {
-        log()
+        log(nil, .trace)
     }
 }
 
@@ -89,9 +105,61 @@ extension LocalTrackPublication: VideoCapturerDelegate {
             }
         }
     }
+
+    public func capturer(_ capturer: VideoCapturer, didUpdate state: VideoCapturer.CapturerState) {
+        // Broadcasts can always be stopped from system UI that bypasses our normal disable & unpublish methods.
+        // This check ensures that when this happens the track gets unpublished as well.
+        #if os(iOS)
+        if state == .stopped, capturer is BroadcastScreenCapturer {
+            Task {
+                guard let participant = try await self.requireParticipant() as? LocalParticipant else {
+                    return
+                }
+
+                try await participant.unpublish(publication: self)
+            }
+        }
+        #endif
+    }
 }
 
 extension LocalTrackPublication {
+    func sendAudioTrackFeatures() {
+        // Only proceed if audio track.
+        guard let audioTrack = track as? LocalAudioTrack else { return }
+
+        var newFeatures = audioTrack.captureOptions.toFeatures()
+
+        if let audioPublishOptions = audioTrack.publishOptions as? AudioPublishOptions {
+            // Combine features from publish options.
+            newFeatures.formUnion(audioPublishOptions.toFeatures())
+        }
+
+        // Check if Krisp is enabled.
+        if let processingDelegate = AudioManager.shared.capturePostProcessingDelegate,
+           processingDelegate.audioProcessingName == kLiveKitKrispAudioProcessorName
+        {
+            newFeatures.insert(.tfEnhancedNoiseCancellation)
+        }
+
+        let didUpdateFeatures = _state.mutate {
+            let oldFeatures = $0.audioTrackFeatures
+            $0.audioTrackFeatures = newFeatures
+            return oldFeatures != newFeatures
+        }
+
+        if didUpdateFeatures {
+            log("Sending audio track features: \(newFeatures)")
+            // Send if features updated.
+            Task.detached { [newFeatures] in
+                let participant = try await self.requireParticipant()
+                let room = try participant.requireRoom()
+                try await room.signalClient.sendUpdateLocalAudioTrack(trackSid: self.sid,
+                                                                      features: newFeatures)
+            }
+        }
+    }
+
     func recomputeSenderParameters() {
         guard let track = track as? LocalVideoTrack,
               let sender = track._state.rtpSender else { return }
@@ -107,7 +175,7 @@ extension LocalTrackPublication {
         let parameters = sender.parameters
 
         guard let participant, let room = participant._room else { return }
-        let publishOptions = (track.publishOptions as? VideoPublishOptions) ?? room._state.options.defaultVideoPublishOptions
+        let publishOptions = (track.publishOptions as? VideoPublishOptions) ?? room._state.roomOptions.defaultVideoPublishOptions
 
         // re-compute encodings
         let encodings = Utils.computeVideoEncodings(dimensions: dimensions,
@@ -146,7 +214,7 @@ extension LocalTrackPublication {
         Task.detached {
             let participant = try await self.requireParticipant()
             let room = try participant.requireRoom()
-            try await room.engine.signalClient.sendUpdateVideoLayers(trackSid: track.sid!, layers: layers)
+            try await room.signalClient.sendUpdateVideoLayers(trackSid: track.sid!, layers: layers)
         }
     }
 }

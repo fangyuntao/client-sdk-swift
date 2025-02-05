@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,8 +34,9 @@ class WebSocket: NSObject, Loggable, AsyncSequence, URLSessionWebSocketDelegate 
         config.timeoutIntervalForResource = TimeInterval(604_800)
         config.shouldUseExtendedBackgroundIdleMode = true
         config.networkServiceType = .callSignaling
-        #if os(iOS)
-            config.multipathServiceType = .handover
+        #if os(iOS) || os(visionOS)
+        /// https://developer.apple.com/documentation/foundation/urlsessionconfiguration/improving_network_reliability_using_multipath_tcp
+        config.multipathServiceType = .handover
         #endif
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
@@ -47,10 +48,10 @@ class WebSocket: NSObject, Loggable, AsyncSequence, URLSessionWebSocketDelegate 
         waitForNextValue()
     }
 
-    init(url: URL) async throws {
+    init(url: URL, connectOptions: ConnectOptions?) async throws {
         request = URLRequest(url: url,
                              cachePolicy: .useProtocolCachePolicy,
-                             timeoutInterval: .defaultSocketConnect)
+                             timeoutInterval: connectOptions?.socketConnectTimeoutInterval ?? .defaultSocketConnect)
         super.init()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in

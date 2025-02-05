@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,19 @@
  * limitations under the License.
  */
 
-import Foundation
-
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 typealias DebouncFunc = () -> Void
 
 enum OS {
     case macOS
     case iOS
+    case visionOS
+    case tvOS
 }
 
 extension OS: CustomStringConvertible {
@@ -30,6 +34,8 @@ extension OS: CustomStringConvertible {
         switch self {
         case .macOS: return "macOS"
         case .iOS: return "iOS"
+        case .visionOS: return "visionOS"
+        case .tvOS: return "tvOS"
         }
     }
 }
@@ -54,10 +60,14 @@ class Utils {
 
     /// Returns current OS.
     static func os() -> OS {
-        #if os(macOS)
-            .macOS
-        #elseif os(iOS)
-            .iOS
+        #if os(iOS)
+        .iOS
+        #elseif os(macOS)
+        .macOS
+        #elseif os(visionOS)
+        .visionOS
+        #elseif os(tvOS)
+        .tvOS
         #endif
     }
 
@@ -78,36 +88,36 @@ class Utils {
     /// Returns a model identifier.
     /// format: `MacBookPro18,3`, `iPhone13,3` or `iOSSimulator,arm64`
     static func modelIdentifier() -> String? {
-        #if os(macOS)
-            let service = IOServiceGetMatchingService(kIOMasterPortDefault,
-                                                      IOServiceMatching("IOPlatformExpertDevice"))
-            defer { IOObjectRelease(service) }
+        #if os(iOS) || os(visionOS) || os(tvOS)
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machineMirror = Mirror(reflecting: systemInfo.machine)
+        let identifier = machineMirror.children.reduce("") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return identifier }
+            return identifier + String(UnicodeScalar(UInt8(value)))
+        }
+        // for simulator, the following codes are returned
+        guard !["i386", "x86_64", "arm64"].contains(where: { $0 == identifier }) else {
+            return "iOSSimulator,\(identifier)"
+        }
+        return identifier
+        #elseif os(macOS)
+        let service = IOServiceGetMatchingService(kIOMasterPortDefault,
+                                                  IOServiceMatching("IOPlatformExpertDevice"))
+        defer { IOObjectRelease(service) }
 
-            guard let modelData = IORegistryEntryCreateCFProperty(service,
-                                                                  "model" as CFString,
-                                                                  kCFAllocatorDefault,
-                                                                  0).takeRetainedValue() as? Data
-            else {
-                return nil
-            }
+        guard let modelData = IORegistryEntryCreateCFProperty(service,
+                                                              "model" as CFString,
+                                                              kCFAllocatorDefault,
+                                                              0).takeRetainedValue() as? Data
+        else {
+            return nil
+        }
 
-            return modelData.withUnsafeBytes { (pointer: UnsafeRawBufferPointer) -> String? in
-                guard let cString = pointer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
-                return String(cString: cString)
-            }
-        #elseif os(iOS)
-            var systemInfo = utsname()
-            uname(&systemInfo)
-            let machineMirror = Mirror(reflecting: systemInfo.machine)
-            let identifier = machineMirror.children.reduce("") { identifier, element in
-                guard let value = element.value as? Int8, value != 0 else { return identifier }
-                return identifier + String(UnicodeScalar(UInt8(value)))
-            }
-            // for simulator, the following codes are returned
-            guard !["i386", "x86_64", "arm64"].contains(where: { $0 == identifier }) else {
-                return "iOSSimulator,\(identifier)"
-            }
-            return identifier
+        return modelData.withUnsafeBytes { (pointer: UnsafeRawBufferPointer) -> String? in
+            guard let cString = pointer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            return String(cString: cString)
+        }
         #endif
     }
 
@@ -126,34 +136,35 @@ class Utils {
     }
 
     static func buildUrl(
-        _ url: String,
+        _ url: URL,
         _ token: String,
         connectOptions: ConnectOptions? = nil,
         reconnectMode: ReconnectMode? = nil,
+        participantSid: Participant.Sid? = nil,
         adaptiveStream: Bool,
         validate: Bool = false,
         forceSecure: Bool = false
-    ) -> URL? {
+    ) throws -> URL {
         // use default options if nil
         let connectOptions = connectOptions ?? ConnectOptions()
 
-        guard let parsedUrl = URL(string: url) else { return nil }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
 
-        let components = URLComponents(url: parsedUrl, resolvingAgainstBaseURL: false)
+        guard var builder = components else {
+            throw LiveKitError(.failedToParseUrl)
+        }
 
-        guard var builder = components else { return nil }
-
-        let useSecure = parsedUrl.isSecure || forceSecure
+        let useSecure = url.isSecure || forceSecure
         let httpScheme = useSecure ? "https" : "http"
         let wsScheme = useSecure ? "wss" : "ws"
 
-        var pathSegments = parsedUrl.pathComponents
+        var pathSegments = url.pathComponents
         // strip empty & slashes
         pathSegments.removeAll(where: { $0.isEmpty || $0 == "/" })
 
         // if already ending with `rtc` or `validate`
         // and is not a dir, remove it
-        if !parsedUrl.hasDirectoryPath,
+        if !url.hasDirectoryPath,
            !pathSegments.isEmpty,
            ["rtc", "validate"].contains(pathSegments.last!)
         {
@@ -188,17 +199,23 @@ class Utils {
         }
 
         // only for quick-reconnect
-        queryItems.append(URLQueryItem(name: "reconnect", value: reconnectMode == .quick ? "1" : "0"))
+        if reconnectMode == .quick {
+            queryItems.append(URLQueryItem(name: "reconnect", value: "1"))
+            if let sid = participantSid {
+                queryItems.append(URLQueryItem(name: "sid", value: sid.stringValue))
+            }
+        }
+
         queryItems.append(URLQueryItem(name: "auto_subscribe", value: connectOptions.autoSubscribe ? "1" : "0"))
         queryItems.append(URLQueryItem(name: "adaptive_stream", value: adaptiveStream ? "1" : "0"))
 
-        if let publish = connectOptions.publishOnlyMode {
-            queryItems.append(URLQueryItem(name: "publish", value: publish))
-        }
-
         builder.queryItems = queryItems
 
-        return builder.url
+        guard let result = builder.url else {
+            throw LiveKitError(.failedToParseUrl)
+        }
+
+        return result
     }
 
     static func computeVideoEncodings(
@@ -216,11 +233,11 @@ class Utils {
         if let videoCodec, videoCodec.isSVC {
             // SVC mode
             logger.log("Using SVC mode", type: Utils.self)
-            return [Engine.createRtpEncodingParameters(encoding: encoding, scalabilityMode: .L3T3_KEY)]
+            return [RTC.createRtpEncodingParameters(encoding: encoding, scalabilityMode: .L3T3_KEY)]
         } else if !publishOptions.simulcast {
             // Not-simulcast mode
             logger.log("Simulcast not enabled", type: Utils.self)
-            return [Engine.createRtpEncodingParameters(encoding: encoding)]
+            return [RTC.createRtpEncodingParameters(encoding: encoding)]
         }
 
         // Continue to simulcast encoding computation...
@@ -264,4 +281,17 @@ extension MutableCollection {
             }
         }
     }
+}
+
+func computeAttributesDiff(oldValues: [String: String], newValues: [String: String]) -> [String: String] {
+    let allKeys = Set(oldValues.keys).union(newValues.keys)
+    var diff = [String: String]()
+
+    for key in allKeys {
+        if oldValues[key] != newValues[key] {
+            diff[key] = newValues[key] ?? ""
+        }
+    }
+
+    return diff
 }

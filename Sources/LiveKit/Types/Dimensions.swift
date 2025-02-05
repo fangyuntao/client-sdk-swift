@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,15 @@
  */
 
 import CoreMedia
-import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
-public class Dimensions: NSObject, Loggable {
+public final class Dimensions: NSObject, Loggable, Sendable {
     @objc
     public let width: Int32
 
@@ -142,7 +145,7 @@ extension Dimensions {
                 continue
             }
 
-            let parameters = Engine.createRtpEncodingParameters(
+            let parameters = RTC.createRtpEncodingParameters(
                 rid: rid,
                 encoding: preset.encoding,
                 scaleDownBy: Double(max) / Double(preset.dimensions.max)

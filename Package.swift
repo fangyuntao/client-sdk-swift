@@ -18,30 +18,47 @@ let package = Package(
     ],
     dependencies: [
         // LK-Prefixed Dynamic WebRTC XCFramework
-        .package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "114.5735.13"),
-        .package(url: "https://github.com/apple/swift-protobuf.git", .upToNextMajor(from: "1.25.2")),
-        .package(url: "https://github.com/apple/swift-log.git", .upToNextMajor(from: "1.5.3")),
-        .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0"),
+        .package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "125.6422.16"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.26.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
+        // Only used for DocC generation
+        .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.3.0"),
+        // Only used for Testing
+        .package(url: "https://github.com/vapor/jwt-kit.git", from: "4.13.4"),
     ],
     targets: [
-        .systemLibrary(name: "CHeaders"),
+        .target(
+            name: "LKObjCHelpers",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "LiveKit",
             dependencies: [
-                .target(name: "CHeaders"),
                 .product(name: "LiveKitWebRTC", package: "webrtc-xcframework"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
                 .product(name: "Logging", package: "swift-log"),
+                "LKObjCHelpers",
             ],
-            path: "Sources"
+            resources: [
+                .process("PrivacyInfo.xcprivacy"),
+            ]
         ),
         .testTarget(
             name: "LiveKitTests",
-            dependencies: ["LiveKit"]
+            dependencies: [
+                "LiveKit",
+                .product(name: "JWTKit", package: "jwt-kit"),
+            ]
         ),
         .testTarget(
             name: "LiveKitTestsObjC",
-            dependencies: ["LiveKit"]
+            dependencies: [
+                "LiveKit",
+                .product(name: "JWTKit", package: "jwt-kit"),
+            ]
         ),
+    ],
+    swiftLanguageVersions: [
+        .v5,
     ]
 )

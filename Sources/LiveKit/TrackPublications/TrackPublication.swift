@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -90,6 +90,8 @@ public class TrackPublication: NSObject, ObservableObject, Loggable {
         var encryptionType: EncryptionType = .none
 
         var latestInfo: Livekit_TrackInfo?
+
+        var audioTrackFeatures: Set<Livekit_AudioTrackFeature>?
     }
 
     let _state: StateSync<State>
@@ -205,7 +207,7 @@ extension TrackPublication: TrackDelegateInternal {
             let room = try participant.requireRoom()
 
             if shouldSendSignal {
-                try await room.engine.signalClient.sendMuteTrack(trackSid: self.sid, muted: isMuted)
+                try await room.signalClient.sendMuteTrack(trackSid: self.sid, muted: isMuted)
             }
 
             participant.delegates.notify {

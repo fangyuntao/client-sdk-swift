@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,9 @@ public protocol ParticipantDelegate: AnyObject {
     @objc optional
     func participant(_ participant: Participant, didUpdatePermissions permissions: ParticipantPermissions)
 
+    @objc optional
+    func participant(_ participant: Participant, didUpdateAttributes attributes: [String: String])
+
     // MARK: - TrackPublication
 
     /// `muted` state has updated for the ``Participant``'s ``TrackPublication``.
@@ -62,6 +65,10 @@ public protocol ParticipantDelegate: AnyObject {
     @objc optional
     func participant(_ participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool)
 
+    /// Received transcription segments.
+    @objc optional
+    func participant(_ participant: Participant, trackPublication: TrackPublication, didReceiveTranscriptionSegments segments: [TranscriptionSegment])
+
     // MARK: - LocalTrackPublication
 
     /// The ``LocalParticipant`` has published a ``LocalTrackPublication``.
@@ -71,6 +78,10 @@ public protocol ParticipantDelegate: AnyObject {
     /// The ``LocalParticipant`` has unpublished a ``LocalTrackPublication``.
     @objc(localParticipant:didUnpublishTrack:) optional
     func participant(_ participant: LocalParticipant, didUnpublishTrack publication: LocalTrackPublication)
+
+    /// Fired when the first remote participant has subscribed to the localParticipant's track.
+    @objc(localParticipant:remoteDidSubscribeTrack:) optional
+    func participant(_ participant: LocalParticipant, remoteDidSubscribeTrack publication: LocalTrackPublication)
 
     // MARK: - RemoteTrackPublication
 

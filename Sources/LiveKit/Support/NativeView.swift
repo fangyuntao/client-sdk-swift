@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,56 +17,60 @@
 import Foundation
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
-#if os(iOS)
-    public typealias NativeViewType = UIView
+#if os(iOS) || os(visionOS) || os(tvOS)
+public typealias NativeViewType = UIView
 #elseif os(macOS)
-    public typealias NativeViewType = NSView
+public typealias NativeViewType = NSView
 #endif
 
 /// A simple abstraction of a View that is native to the platform.
 /// When built for iOS this will be a UIView.
 /// When built for macOS this will be a NSView.
-public class NativeView: NativeViewType {
-    override init(frame: CGRect) {
+open class NativeView: NativeViewType {
+    override public init(frame: CGRect) {
         super.init(frame: frame)
     }
 
     @available(*, unavailable)
-    required init?(coder _: NSCoder) {
+    public required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    #if os(iOS)
-        override public func layoutSubviews() {
-            super.layoutSubviews()
-            performLayout()
-        }
+    #if os(iOS) || os(visionOS) || os(tvOS)
+    override public func layoutSubviews() {
+        super.layoutSubviews()
+        performLayout()
+    }
     #else
-        override public func layout() {
-            super.layout()
-            performLayout()
-        }
+    override public func layout() {
+        super.layout()
+        performLayout()
+    }
     #endif
 
     #if os(macOS)
-        // for compatibility with macOS
-        func setNeedsLayout() {
-            needsLayout = true
-        }
+    // for compatibility with macOS
+    public func setNeedsLayout() {
+        needsLayout = true
+    }
     #endif
 
     #if os(macOS)
-        func bringSubviewToFront(_ view: NSView) {
-            addSubview(view)
-        }
+    public func bringSubviewToFront(_ view: NSView) {
+        addSubview(view)
+    }
+
+    public func insertSubview(_ view: NSView, belowSubview: NSView) {
+        addSubview(view, positioned: .below, relativeTo: belowSubview)
+    }
     #endif
 
-    func performLayout() {
+    open func performLayout() {
         //
     }
 }

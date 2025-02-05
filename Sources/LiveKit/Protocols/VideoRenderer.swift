@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,13 @@
  * limitations under the License.
  */
 
-import Foundation
+import AVFoundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
 public protocol VideoRenderer {
@@ -30,9 +34,16 @@ public protocol VideoRenderer {
     var adaptiveStreamSize: CGSize { get }
 
     /// Size of the frame.
+    @objc optional
     func set(size: CGSize)
 
+    /// A ``VideoFrame`` is ready and should be processed.
+    @objc optional
     func render(frame: VideoFrame)
+
+    /// In addition to ``VideoFrame``, provide capture-time information if available.
+    @objc optional
+    func render(frame: VideoFrame, captureDevice: AVCaptureDevice?, captureOptions: VideoCaptureOptions?)
 }
 
 class VideoRendererAdapter: NSObject, LKRTCVideoRenderer {
@@ -43,12 +54,13 @@ class VideoRendererAdapter: NSObject, LKRTCVideoRenderer {
     }
 
     func setSize(_ size: CGSize) {
-        target?.set(size: size)
+        target?.set?(size: size)
     }
 
     func renderFrame(_ frame: LKRTCVideoFrame?) {
         guard let frame = frame?.toLKType() else { return }
-        target?.render(frame: frame)
+        target?.render?(frame: frame)
+        target?.render?(frame: frame, captureDevice: nil, captureOptions: nil)
     }
 
     // Proxy the equality operators

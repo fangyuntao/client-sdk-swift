@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@
 import Foundation
 
 public extension ConnectOptions {
-    func copyWith(autoSubscribe: Bool? = nil,
-                  reconnectAttempts: Int? = nil,
-                  reconnectAttemptDelay: TimeInterval? = nil,
-                  protocolVersion: ProtocolVersion? = nil) -> ConnectOptions
+    func copyWith(autoSubscribe: ValueOrAbsent<Bool> = .absent,
+                  reconnectAttempts: ValueOrAbsent<Int> = .absent,
+                  reconnectAttemptDelay: ValueOrAbsent<TimeInterval> = .absent,
+                  protocolVersion: ValueOrAbsent<ProtocolVersion> = .absent) -> ConnectOptions
     {
-        ConnectOptions(autoSubscribe: autoSubscribe ?? self.autoSubscribe,
-                       reconnectAttempts: reconnectAttempts ?? self.reconnectAttempts,
-                       reconnectAttemptDelay: reconnectAttemptDelay ?? self.reconnectAttemptDelay,
-                       protocolVersion: protocolVersion ?? self.protocolVersion)
+        ConnectOptions(autoSubscribe: autoSubscribe.value(ifAbsent: self.autoSubscribe),
+                       reconnectAttempts: reconnectAttempts.value(ifAbsent: self.reconnectAttempts),
+                       reconnectAttemptDelay: reconnectAttemptDelay.value(ifAbsent: self.reconnectAttemptDelay),
+                       protocolVersion: protocolVersion.value(ifAbsent: self.protocolVersion))
     }
 }

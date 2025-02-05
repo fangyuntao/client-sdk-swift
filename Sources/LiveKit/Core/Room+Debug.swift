@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 import Foundation
 
-public enum SimulateScenario {
+public enum SimulateScenario: Sendable {
     // Client
     case quickReconnect
     case fullReconnect
@@ -33,11 +33,11 @@ public extension Room {
     /// Simulate a scenario for debuggin
     func debug_simulate(scenario: SimulateScenario) async throws {
         if case .quickReconnect = scenario {
-            try await engine.startReconnect(reason: .debug)
+            try await startReconnect(reason: .debug)
         } else if case .fullReconnect = scenario {
-            try await engine.startReconnect(reason: .debug, nextReconnectMode: .full)
+            try await startReconnect(reason: .debug, nextReconnectMode: .full)
         } else {
-            try await engine.signalClient.sendSimulate(scenario: scenario)
+            try await signalClient.sendSimulate(scenario: scenario)
         }
     }
 }

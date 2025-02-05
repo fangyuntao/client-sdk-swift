@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-import Foundation
-
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 protocol TransportDelegate: AnyObject {
-    func transport(_ transport: Transport, didUpdateState state: RTCPeerConnectionState) async
-    func transport(_ transport: Transport, didGenerateIceCandidate iceCandidate: LKRTCIceCandidate) async
-    func transport(_ transport: Transport, didOpenDataChannel dataChannel: LKRTCDataChannel) async
-    func transport(_ transport: Transport, didAddTrack track: LKRTCMediaStreamTrack, rtpReceiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) async
-    func transport(_ transport: Transport, didRemoveTrack track: LKRTCMediaStreamTrack) async
-    func transportShouldNegotiate(_ transport: Transport) async
+    func transport(_ transport: Transport, didUpdateState state: RTCPeerConnectionState)
+    func transport(_ transport: Transport, didGenerateIceCandidate iceCandidate: IceCandidate)
+    func transport(_ transport: Transport, didOpenDataChannel dataChannel: LKRTCDataChannel)
+    func transport(_ transport: Transport, didAddTrack track: LKRTCMediaStreamTrack, rtpReceiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream])
+    func transport(_ transport: Transport, didRemoveTrack track: LKRTCMediaStreamTrack)
+    func transportShouldNegotiate(_ transport: Transport)
 }

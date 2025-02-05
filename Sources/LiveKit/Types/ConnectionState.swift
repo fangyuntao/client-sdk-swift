@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@
 import Foundation
 
 @objc
-public enum ReconnectMode: Int {
+public enum ReconnectMode: Int, Sendable {
     case quick
     case full
 }
 
 @objc
-public enum ConnectionState: Int {
+public enum ConnectionState: Int, Sendable {
     case disconnected
     case connecting
     case reconnecting

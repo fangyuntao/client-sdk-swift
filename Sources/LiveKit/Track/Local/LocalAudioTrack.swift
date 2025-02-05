@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 LiveKit
+ * Copyright 2025 LiveKit
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,28 @@
  * limitations under the License.
  */
 
+import Combine
 import Foundation
 
+#if swift(>=5.9)
+internal import LiveKitWebRTC
+#else
 @_implementationOnly import LiveKitWebRTC
+#endif
 
 @objc
 public class LocalAudioTrack: Track, LocalTrack, AudioTrack {
+    /// ``AudioCaptureOptions`` used to create this track.
+    let captureOptions: AudioCaptureOptions
+
     init(name: String,
          source: Track.Source,
          track: LKRTCMediaStreamTrack,
-         reportStatistics: Bool)
+         reportStatistics: Bool,
+         captureOptions: AudioCaptureOptions)
     {
+        self.captureOptions = captureOptions
+
         super.init(name: name,
                    kind: .audio,
                    source: source,
@@ -44,39 +55,20 @@ public class LocalAudioTrack: Track, LocalTrack, AudioTrack {
             "googNoiseSuppression": options.noiseSuppression.toString(),
             "googTypingNoiseDetection": options.typingNoiseDetection.toString(),
             "googHighpassFilter": options.highpassFilter.toString(),
-            "googNoiseSuppression2": options.experimentalNoiseSuppression.toString(),
-            "googAutoGainControl2": options.experimentalAutoGainControl.toString(),
         ]
 
         let audioConstraints = DispatchQueue.liveKitWebRTC.sync { LKRTCMediaConstraints(mandatoryConstraints: nil,
                                                                                         optionalConstraints: constraints) }
 
-        let audioSource = Engine.createAudioSource(audioConstraints)
-        let rtcTrack = Engine.createAudioTrack(source: audioSource)
+        let audioSource = RTC.createAudioSource(audioConstraints)
+        let rtcTrack = RTC.createAudioTrack(source: audioSource)
         rtcTrack.isEnabled = true
 
         return LocalAudioTrack(name: name,
                                source: .microphone,
                                track: rtcTrack,
-                               reportStatistics: reportStatistics)
-    }
-
-    @discardableResult
-    override func onPublish() async throws -> Bool {
-        let didPublish = try await super.onPublish()
-        if didPublish {
-            AudioManager.shared.trackDidStart(.local)
-        }
-        return didPublish
-    }
-
-    @discardableResult
-    override func onUnpublish() async throws -> Bool {
-        let didUnpublish = try await super.onUnpublish()
-        if didUnpublish {
-            AudioManager.shared.trackDidStop(.local)
-        }
-        return didUnpublish
+                               reportStatistics: reportStatistics,
+                               captureOptions: options)
     }
 
     public func mute() async throws {
@@ -91,4 +83,14 @@ public class LocalAudioTrack: Track, LocalTrack, AudioTrack {
 public extension LocalAudioTrack {
     var publishOptions: TrackPublishOptions? { super._state.lastPublishOptions }
     var publishState: Track.PublishState { super._state.publishState }
+}
+
+public extension LocalAudioTrack {
+    func add(audioRenderer: AudioRenderer) {
+        AudioManager.shared.add(localAudioRenderer: audioRenderer)
+    }
+
+    func remove(audioRenderer: AudioRenderer) {
+        AudioManager.shared.remove(localAudioRenderer: audioRenderer)
+    }
 }
